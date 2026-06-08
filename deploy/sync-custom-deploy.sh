@@ -10,6 +10,9 @@ set -Eeuo pipefail
 #   SUB2API_IMAGE_REPO=sub2api-custom
 #   SUB2API_DEPLOY_DIR=/path/to/current/deploy
 #   SUB2API_COMPOSE_FILES=/path/to/docker-compose.yml,/path/to/docker-compose.local.yml
+#   SUB2API_GOPROXY=https://proxy.golang.org,direct
+#   SUB2API_GOSUMDB=sum.golang.org
+#   SUB2API_DOCKER_BUILD_ARGS='--network host --build-arg HTTPS_PROXY=http://host:port'
 #   SUB2API_SKIP_BACKUP=1
 
 REPO_URL="${SUB2API_REPO_URL:-https://github.com/qiqua/sub2api.git}"
@@ -18,6 +21,9 @@ SRC_DIR="${SUB2API_SRC_DIR:-/opt/sub2api-src}"
 IMAGE_REPO="${SUB2API_IMAGE_REPO:-sub2api-custom}"
 APP_CONTAINER="${SUB2API_APP_CONTAINER:-sub2api}"
 POSTGRES_CONTAINER="${SUB2API_POSTGRES_CONTAINER:-sub2api-postgres}"
+GOPROXY_OVERRIDE="${SUB2API_GOPROXY:-}"
+GOSUMDB_OVERRIDE="${SUB2API_GOSUMDB:-}"
+DOCKER_BUILD_ARGS="${SUB2API_DOCKER_BUILD_ARGS:-}"
 SKIP_BACKUP="${SUB2API_SKIP_BACKUP:-0}"
 
 log() {
@@ -95,8 +101,23 @@ BRANCH_TAG="$(normalize_branch_tag "$BRANCH")"
 IMAGE_TAG="${SUB2API_IMAGE_TAG:-${BRANCH_TAG}-${COMMIT}}"
 IMAGE_NAME="${IMAGE_REPO}:${IMAGE_TAG}"
 
+build_args=()
+if [[ -n "$GOPROXY_OVERRIDE" ]]; then
+  build_args+=("--build-arg" "GOPROXY=$GOPROXY_OVERRIDE")
+fi
+if [[ -n "$GOSUMDB_OVERRIDE" ]]; then
+  build_args+=("--build-arg" "GOSUMDB=$GOSUMDB_OVERRIDE")
+fi
+if [[ -n "$DOCKER_BUILD_ARGS" ]]; then
+  read -r -a extra_build_args <<< "$DOCKER_BUILD_ARGS"
+  build_args+=("${extra_build_args[@]}")
+fi
+
 log "Building image: $IMAGE_NAME"
-docker build -t "$IMAGE_NAME" -t "${IMAGE_REPO}:latest" "$SRC_DIR"
+if [[ ${#build_args[@]} -gt 0 ]]; then
+  log "Docker build extra args: ${build_args[*]}"
+fi
+docker build "${build_args[@]}" -t "$IMAGE_NAME" -t "${IMAGE_REPO}:latest" "$SRC_DIR"
 
 detected_deploy_dir="$(inspect_label "$APP_CONTAINER" "com.docker.compose.project.working_dir")"
 DEPLOY_DIR="${SUB2API_DEPLOY_DIR:-${detected_deploy_dir:-$(script_dir)}}"
