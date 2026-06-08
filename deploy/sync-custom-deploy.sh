@@ -7,6 +7,11 @@ set -Eeuo pipefail
 #   SUB2API_REPO_URL=https://github.com/qiqua/sub2api.git
 #   SUB2API_BRANCH=custom/main
 #   SUB2API_SRC_DIR=/opt/sub2api-src
+#   # Default: pull a prebuilt image from GHCR. Use build only on larger servers.
+#   SUB2API_DEPLOY_MODE=pull
+#   SUB2API_REMOTE_IMAGE=ghcr.io/qiqua/sub2api:custom-main
+#   # Optional local build mode:
+#   # SUB2API_DEPLOY_MODE=build
 #   SUB2API_IMAGE_REPO=sub2api-custom
 #   SUB2API_DEPLOY_DIR=/path/to/current/deploy
 #   SUB2API_COMPOSE_FILES=/path/to/docker-compose.yml,/path/to/docker-compose.local.yml
@@ -18,6 +23,8 @@ set -Eeuo pipefail
 REPO_URL="${SUB2API_REPO_URL:-https://github.com/qiqua/sub2api.git}"
 BRANCH="${SUB2API_BRANCH:-custom/main}"
 SRC_DIR="${SUB2API_SRC_DIR:-/opt/sub2api-src}"
+DEPLOY_MODE="${SUB2API_DEPLOY_MODE:-pull}"
+REMOTE_IMAGE="${SUB2API_REMOTE_IMAGE:-ghcr.io/qiqua/sub2api:custom-main}"
 IMAGE_REPO="${SUB2API_IMAGE_REPO:-sub2api-custom}"
 APP_CONTAINER="${SUB2API_APP_CONTAINER:-sub2api}"
 POSTGRES_CONTAINER="${SUB2API_POSTGRES_CONTAINER:-sub2api-postgres}"
@@ -69,6 +76,7 @@ require_cmd docker
 log "Repository: $REPO_URL"
 log "Branch: $BRANCH"
 log "Source dir: $SRC_DIR"
+log "Deploy mode: $DEPLOY_MODE"
 
 if [[ ! -d "$SRC_DIR/.git" ]]; then
   if [[ -e "$SRC_DIR" ]]; then
@@ -99,25 +107,41 @@ fi
 COMMIT="$(git -C "$SRC_DIR" rev-parse --short=12 HEAD)"
 BRANCH_TAG="$(normalize_branch_tag "$BRANCH")"
 IMAGE_TAG="${SUB2API_IMAGE_TAG:-${BRANCH_TAG}-${COMMIT}}"
-IMAGE_NAME="${IMAGE_REPO}:${IMAGE_TAG}"
 
-build_args=()
-if [[ -n "$GOPROXY_OVERRIDE" ]]; then
-  build_args+=("--build-arg" "GOPROXY=$GOPROXY_OVERRIDE")
-fi
-if [[ -n "$GOSUMDB_OVERRIDE" ]]; then
-  build_args+=("--build-arg" "GOSUMDB=$GOSUMDB_OVERRIDE")
-fi
-if [[ -n "$DOCKER_BUILD_ARGS" ]]; then
-  read -r -a extra_build_args <<< "$DOCKER_BUILD_ARGS"
-  build_args+=("${extra_build_args[@]}")
-fi
+case "$DEPLOY_MODE" in
+  pull)
+    IMAGE_NAME="$REMOTE_IMAGE"
+    log "Pulling image: $IMAGE_NAME"
+    docker pull "$IMAGE_NAME"
+    ;;
+  build)
+    IMAGE_NAME="${IMAGE_REPO}:${IMAGE_TAG}"
+    build_args=()
+    if [[ -n "$GOPROXY_OVERRIDE" ]]; then
+      build_args+=("--build-arg" "GOPROXY=$GOPROXY_OVERRIDE")
+    fi
+    if [[ -n "$GOSUMDB_OVERRIDE" ]]; then
+      build_args+=("--build-arg" "GOSUMDB=$GOSUMDB_OVERRIDE")
+    fi
+    if [[ -n "$DOCKER_BUILD_ARGS" ]]; then
+      read -r -a extra_build_args <<< "$DOCKER_BUILD_ARGS"
+      build_args+=("${extra_build_args[@]}")
+    fi
 
-log "Building image: $IMAGE_NAME"
-if [[ ${#build_args[@]} -gt 0 ]]; then
-  log "Docker build extra args: ${build_args[*]}"
+    log "Building image: $IMAGE_NAME"
+    if [[ ${#build_args[@]} -gt 0 ]]; then
+      log "Docker build extra args: ${build_args[*]}"
+    fi
+    docker build "${build_args[@]}" -t "$IMAGE_NAME" -t "${IMAGE_REPO}:latest" "$SRC_DIR"
+    ;;
+  *)
+    die "Unsupported SUB2API_DEPLOY_MODE: $DEPLOY_MODE. Use pull or build."
+    ;;
+esac
+
+if [[ -z "$IMAGE_NAME" ]]; then
+  die "Image name is empty."
 fi
-docker build "${build_args[@]}" -t "$IMAGE_NAME" -t "${IMAGE_REPO}:latest" "$SRC_DIR"
 
 detected_deploy_dir="$(inspect_label "$APP_CONTAINER" "com.docker.compose.project.working_dir")"
 DEPLOY_DIR="${SUB2API_DEPLOY_DIR:-${detected_deploy_dir:-$(script_dir)}}"
