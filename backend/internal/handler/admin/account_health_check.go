@@ -749,19 +749,16 @@ func classifyAccountHealthCheckError(testStatus, errMsg string) (status, categor
 	httpStatus = extractAccountHealthHTTPStatus(lower)
 	errorCode = extractAccountHealthErrorCode(lower)
 
-	if containsAny(lower, "insufficient_quota", "insufficient quota", "quota exceeded", "quota_exceeded", "usage limit", "usage_limit", "credit", "credits", "billing hard limit") {
-		if httpStatus == http.StatusTooManyRequests {
-			return AccountHealthStatusRateLimited, AccountHealthCategoryQuotaExhausted, httpStatus, errorCode
-		}
-		return AccountHealthStatusUnavailable, AccountHealthCategoryQuotaExhausted, httpStatus, errorCode
+	if containsAny(lower, "insufficient_quota", "insufficient quota", "quota exhausted", "quota_exhausted", "quota exceeded", "quota_exceeded", "check quota", "usage limit", "usage_limit", "credit", "credits", "billing hard limit", "billing_hard_limit") {
+		return AccountHealthStatusRateLimited, AccountHealthCategoryQuotaExhausted, httpStatus, errorCode
 	}
 	if httpStatus == http.StatusTooManyRequests || containsAny(lower, "rate_limit", "rate limit", "too many requests", "ratelimited", "rate-limited") {
 		return AccountHealthStatusRateLimited, AccountHealthCategoryRateLimited, httpStatus, errorCode
 	}
-	if containsAny(lower, "no access token available", "missing refresh token", "missing api key", "api key is required", "credential is required", "credentials are required", "unsupported account", "unsupported platform") {
+	if containsAny(lower, "no access token available", "no api key available", "missing refresh token", "missing api key", "api key is required", "credential is required", "credentials are required", "unsupported account", "unsupported platform") {
 		return AccountHealthStatusUnavailable, AccountHealthCategoryConfigError, httpStatus, errorCode
 	}
-	if httpStatus == http.StatusUnauthorized || httpStatus == http.StatusForbidden || containsAny(lower, "invalid token", "invalid api key", "unauthorized", "forbidden", "authentication failed", "permission denied") {
+	if httpStatus == http.StatusUnauthorized || httpStatus == http.StatusForbidden || containsAny(lower, "invalid token", "invalid_refresh_token", "refresh_token_invalid", "refresh token invalid", "refresh_token_expired", "refresh token expired", "refresh_token_reused", "invalid_grant", "invalid_client", "invalid api key", "unauthorized", "unauthorized_client", "unauthenticated", "forbidden", "access_denied", "access denied", "authentication failed", "permission denied", "permission_denied") {
 		return AccountHealthStatusUnavailable, AccountHealthCategoryAuthInvalid, httpStatus, errorCode
 	}
 	if containsAny(lower, "model not found", "unsupported model", "invalid model", "model_not_found") || (httpStatus == http.StatusNotFound && strings.Contains(lower, "model")) {
@@ -796,9 +793,35 @@ func extractAccountHealthHTTPStatus(lowerErr string) int {
 
 func extractAccountHealthErrorCode(lowerErr string) string {
 	codes := accountHealthErrorCodeRegex.FindAllString(lowerErr, -1)
+	priorities := []string{
+		"usage_limit_reached",
+		"insufficient_quota",
+		"quota_exhausted",
+		"quota_exceeded",
+		"billing_hard_limit_reached",
+		"invalid_refresh_token",
+		"refresh_token_invalid",
+		"refresh_token_expired",
+		"refresh_token_reused",
+		"invalid_grant",
+		"invalid_client",
+		"unauthorized_client",
+		"access_denied",
+		"invalid_api_key",
+		"model_not_found",
+		"rate_limit_exceeded",
+		"permission_denied",
+	}
+	for _, priority := range priorities {
+		for _, code := range codes {
+			if code == priority {
+				return code
+			}
+		}
+	}
 	for _, code := range codes {
 		switch code {
-		case "access_token", "refresh_token", "api_key":
+		case "access_token", "refresh_token", "api_key", "invalid_request_error", "resource_exhausted", "openai_oauth_token_refresh_failed":
 			continue
 		default:
 			return code
