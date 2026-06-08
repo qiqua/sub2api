@@ -749,7 +749,10 @@ func classifyAccountHealthCheckError(testStatus, errMsg string) (status, categor
 	httpStatus = extractAccountHealthHTTPStatus(lower)
 	errorCode = extractAccountHealthErrorCode(lower)
 
-	if containsAny(lower, "insufficient_quota", "insufficient quota", "quota exceeded", "quota_exceeded", "usage limit", "credit", "credits", "billing hard limit") {
+	if containsAny(lower, "insufficient_quota", "insufficient quota", "quota exceeded", "quota_exceeded", "usage limit", "usage_limit", "credit", "credits", "billing hard limit") {
+		if httpStatus == http.StatusTooManyRequests {
+			return AccountHealthStatusRateLimited, AccountHealthCategoryQuotaExhausted, httpStatus, errorCode
+		}
 		return AccountHealthStatusUnavailable, AccountHealthCategoryQuotaExhausted, httpStatus, errorCode
 	}
 	if httpStatus == http.StatusTooManyRequests || containsAny(lower, "rate_limit", "rate limit", "too many requests", "ratelimited", "rate-limited") {

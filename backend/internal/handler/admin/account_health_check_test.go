@@ -143,6 +143,14 @@ func TestClassifyAccountHealthCheckError(t *testing.T) {
 			wantHTTP:   403,
 		},
 		{
+			name:       "429 usage limit reached is rate limited quota",
+			status:     "failed",
+			errMsg:     "Responses API returned 429: usage_limit_reached",
+			wantStatus: AccountHealthStatusRateLimited,
+			wantCat:    AccountHealthCategoryQuotaExhausted,
+			wantHTTP:   429,
+		},
+		{
 			name:       "model errors are grouped separately",
 			status:     "failed",
 			errMsg:     "API returned 404: model not found",
