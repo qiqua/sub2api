@@ -19,6 +19,7 @@ set -Eeuo pipefail
 #   SUB2API_GOSUMDB=sum.golang.org
 #   SUB2API_DOCKER_BUILD_ARGS='--network host --build-arg HTTPS_PROXY=http://host:port'
 #   SUB2API_SKIP_BACKUP=1
+#   SUB2API_GENERATED_DIR=/tmp/sub2api-custom-deploy
 
 REPO_URL="${SUB2API_REPO_URL:-https://github.com/qiqua/sub2api.git}"
 BRANCH="${SUB2API_BRANCH:-custom/main}"
@@ -32,6 +33,7 @@ GOPROXY_OVERRIDE="${SUB2API_GOPROXY:-}"
 GOSUMDB_OVERRIDE="${SUB2API_GOSUMDB:-}"
 DOCKER_BUILD_ARGS="${SUB2API_DOCKER_BUILD_ARGS:-}"
 SKIP_BACKUP="${SUB2API_SKIP_BACKUP:-0}"
+GENERATED_DIR="${SUB2API_GENERATED_DIR:-/tmp/sub2api-custom-deploy}"
 
 log() {
   printf '[sub2api-custom-deploy] %s\n' "$*"
@@ -175,7 +177,8 @@ for file in "${raw_compose_files[@]}"; do
   compose_args+=("-f" "$compose_file")
 done
 
-override_file="$DEPLOY_DIR/docker-compose.custom-image.yml"
+mkdir -p "$GENERATED_DIR"
+override_file="$GENERATED_DIR/docker-compose.custom-image.yml"
 cat > "$override_file" <<EOF
 services:
   sub2api:
