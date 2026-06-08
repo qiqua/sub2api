@@ -424,6 +424,108 @@ export async function bulkUpdate(
   return data
 }
 
+export interface AccountHealthCheckFilters {
+  platform?: string
+  type?: string
+  status?: string
+  group?: string
+  search?: string
+  privacy_mode?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+}
+
+export interface AccountHealthCheckJobRequest {
+  account_ids?: number[]
+  filters?: AccountHealthCheckFilters
+  model_id?: string
+  concurrency?: number
+  include_unschedulable?: boolean
+}
+
+export interface AccountHealthCheckSummary {
+  total: number
+  pending: number
+  checking: number
+  available: number
+  rate_limited: number
+  unavailable: number
+  by_category: Record<string, number>
+}
+
+export interface AccountHealthCheckJob {
+  id: string
+  status: 'queued' | 'running' | 'completed' | 'canceled' | 'failed'
+  summary: AccountHealthCheckSummary
+  error?: string
+  created_at: string
+  started_at?: string
+  finished_at?: string
+}
+
+export interface AccountHealthCheckResult {
+  account_id: number
+  name: string
+  platform: string
+  type: string
+  status: 'pending' | 'checking' | 'available' | 'rate_limited' | 'unavailable'
+  category: string
+  http_status?: number
+  error_code?: string
+  message?: string
+  latency_ms?: number
+  checked_at?: string
+}
+
+export async function createHealthCheckJob(payload: AccountHealthCheckJobRequest): Promise<AccountHealthCheckJob> {
+  const { data } = await apiClient.post<AccountHealthCheckJob>('/admin/accounts/health-check-jobs', payload, {
+    timeout: 120000
+  })
+  return data
+}
+
+export async function getHealthCheckJob(jobId: string): Promise<AccountHealthCheckJob> {
+  const { data } = await apiClient.get<AccountHealthCheckJob>(`/admin/accounts/health-check-jobs/${jobId}`)
+  return data
+}
+
+export async function listHealthCheckJobResults(
+  jobId: string,
+  filters?: { status?: string; category?: string }
+): Promise<{ items: AccountHealthCheckResult[]; total: number }> {
+  const { data } = await apiClient.get<{ items: AccountHealthCheckResult[]; total: number }>(
+    `/admin/accounts/health-check-jobs/${jobId}/results`,
+    { params: filters }
+  )
+  return data
+}
+
+export async function cancelHealthCheckJob(jobId: string): Promise<AccountHealthCheckJob> {
+  const { data } = await apiClient.post<AccountHealthCheckJob>(`/admin/accounts/health-check-jobs/${jobId}/cancel`)
+  return data
+}
+
+export async function batchDelete(accountIds: number[]): Promise<{
+  total: number
+  success: number
+  failed: number
+  success_ids?: number[]
+  failed_ids?: number[]
+  results: Array<{ account_id: number; success: boolean; error?: string }>
+}> {
+  const { data } = await apiClient.post<{
+    total: number
+    success: number
+    failed: number
+    success_ids?: number[]
+    failed_ids?: number[]
+    results: Array<{ account_id: number; success: boolean; error?: string }>
+  }>('/admin/accounts/batch-delete', {
+    account_ids: accountIds
+  })
+  return data
+}
+
 /**
  * Get account today statistics
  * @param id - Account ID
@@ -737,6 +839,11 @@ export const accountsAPI = {
   batchCreate,
   batchUpdateCredentials,
   bulkUpdate,
+  createHealthCheckJob,
+  getHealthCheckJob,
+  listHealthCheckJobResults,
+  cancelHealthCheckJob,
+  batchDelete,
   previewFromCrs,
   syncFromCrs,
   exportData,

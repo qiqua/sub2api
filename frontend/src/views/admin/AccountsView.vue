@@ -125,6 +125,18 @@
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.errorPassthrough.title') }}</span>
                     </button>
+                    <button class="account-tools-menu-item" @click="openHealthCheck">
+                      <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+                        <Icon name="refresh" size="sm" />
+                      </span>
+                      <span class="flex-1 text-left">批量检测账号</span>
+                      <span
+                        v-if="selIds.length"
+                        class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                      >
+                        已选 {{ selIds.length }}
+                      </span>
+                    </button>
                     <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
                       <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="lock" size="sm" />
@@ -383,6 +395,13 @@
       @updated="handleBulkUpdated"
     />
     <TempUnschedStatusModal :show="showTempUnsched" :account="tempUnschedAcc" @close="showTempUnsched = false" @reset="handleTempUnschedReset" />
+    <AccountHealthCheckModal
+      :show="showHealthCheck"
+      :selected-ids="selIds"
+      :filters="buildBulkEditFilterSnapshot()"
+      @close="showHealthCheck = false"
+      @changed="handleHealthCheckChanged"
+    />
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <ConfirmDialog :show="showExportDataDialog" :title="t('admin.accounts.dataExport')" :message="t('admin.accounts.dataExportConfirmMessage')" :confirm-text="t('admin.accounts.dataExportConfirm')" :cancel-text="t('common.cancel')" @confirm="handleExportData" @cancel="showExportDataDialog = false">
       <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
@@ -420,6 +439,7 @@ import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
+import AccountHealthCheckModal from '@/components/admin/account/AccountHealthCheckModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
@@ -498,6 +518,7 @@ const showTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
+const showHealthCheck = ref(false)
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -876,6 +897,7 @@ const isAnyModalOpen = computed(() => {
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
+    showHealthCheck.value ||
     showTLSFingerprintProfiles.value
   )
 })
@@ -1227,7 +1249,22 @@ const toggleSelectAllVisible = (event: Event) => {
   const target = event.target as HTMLInputElement
   toggleVisible(target.checked)
 }
-const handleBulkDelete = async () => { if(!confirm(t('common.confirm'))) return; try { await Promise.all(selIds.value.map(id => adminAPI.accounts.delete(id))); clearSelection(); reload() } catch (error) { console.error('Failed to bulk delete accounts:', error) } }
+const handleBulkDelete = async () => {
+  if (!confirm(t('common.confirm'))) return
+  try {
+    const result = await adminAPI.accounts.batchDelete(selIds.value)
+    if (result.failed > 0) {
+      appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.bulkActions.bulkDeleteSuccess', { count: result.success }))
+      clearSelection()
+    }
+    reload()
+  } catch (error) {
+    console.error('Failed to bulk delete accounts:', error)
+    appStore.showError(String(error))
+  }
+}
 const handleBulkResetStatus = async () => {
   if (!confirm(t('common.confirm'))) return
   try {
@@ -1410,6 +1447,14 @@ const openBulkEditFiltered = async () => {
 const handleBulkUpdated = () => {
   showBulkEdit.value = false
   bulkEditTarget.value = null
+  clearSelection()
+  reload()
+}
+const openHealthCheck = () => {
+  showAccountToolsDropdown.value = false
+  showHealthCheck.value = true
+}
+const handleHealthCheckChanged = () => {
   clearSelection()
   reload()
 }
