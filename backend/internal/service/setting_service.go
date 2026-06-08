@@ -101,6 +101,18 @@ const backendModeCacheTTL = 60 * time.Second
 const backendModeErrorTTL = 5 * time.Second
 const backendModeDBTimeout = 5 * time.Second
 
+type cachedScheduledAccountTests struct {
+	value     bool
+	expiresAt int64 // unix nano
+}
+
+var scheduledAccountTestsCache atomic.Value // *cachedScheduledAccountTests
+var scheduledAccountTestsSF singleflight.Group
+
+const scheduledAccountTestsCacheTTL = 15 * time.Second
+const scheduledAccountTestsErrorTTL = 5 * time.Second
+const scheduledAccountTestsDBTimeout = 3 * time.Second
+
 // cachedGatewayForwardingSettings 缓存网关转发行为设置（进程内缓存，60s TTL）
 type cachedGatewayForwardingSettings struct {
 	fingerprintUnification       bool
@@ -1889,6 +1901,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
 
+	// Scheduled account tests feature switch
+	updates[SettingKeyScheduledAccountTestsEnabled] = strconv.FormatBool(settings.ScheduledAccountTestsEnabled)
+
 	// Affiliate (邀请返利) feature switch
 	updates[SettingKeyAffiliateEnabled] = strconv.FormatBool(settings.AffiliateEnabled)
 
@@ -2032,6 +2047,11 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	backendModeCache.Store(&cachedBackendMode{
 		value:     settings.BackendModeEnabled,
 		expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
+	})
+	scheduledAccountTestsSF.Forget(SettingKeyScheduledAccountTestsEnabled)
+	scheduledAccountTestsCache.Store(&cachedScheduledAccountTests{
+		value:     settings.ScheduledAccountTestsEnabled,
+		expiresAt: time.Now().Add(scheduledAccountTestsCacheTTL).UnixNano(),
 	})
 	gatewayForwardingSF.Forget("gateway_forwarding")
 	gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
@@ -2234,6 +2254,50 @@ func (s *SettingService) IsBackendModeEnabled(ctx context.Context) bool {
 		backendModeCache.Store(&cachedBackendMode{
 			value:     enabled,
 			expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
+		})
+		return enabled, nil
+	})
+	if val, ok := result.(bool); ok {
+		return val
+	}
+	return false
+}
+
+// IsScheduledAccountTestsEnabled controls automatic scheduled account tests.
+// Missing or unreadable settings are treated as disabled to avoid background
+// account-scan bursts on small instances. Manual health checks are unaffected.
+func (s *SettingService) IsScheduledAccountTestsEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	if cached, ok := scheduledAccountTestsCache.Load().(*cachedScheduledAccountTests); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.value
+		}
+	}
+	result, _, _ := scheduledAccountTestsSF.Do(SettingKeyScheduledAccountTestsEnabled, func() (any, error) {
+		if cached, ok := scheduledAccountTestsCache.Load().(*cachedScheduledAccountTests); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.value, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), scheduledAccountTestsDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyScheduledAccountTestsEnabled)
+		if err != nil {
+			if !errors.Is(err, ErrSettingNotFound) {
+				slog.Warn("failed to get scheduled_account_tests_enabled setting", "error", err)
+			}
+			scheduledAccountTestsCache.Store(&cachedScheduledAccountTests{
+				value:     false,
+				expiresAt: time.Now().Add(scheduledAccountTestsErrorTTL).UnixNano(),
+			})
+			return false, nil
+		}
+		enabled := value == "true"
+		scheduledAccountTestsCache.Store(&cachedScheduledAccountTests{
+			value:     enabled,
+			expiresAt: time.Now().Add(scheduledAccountTestsCacheTTL).UnixNano(),
 		})
 		return enabled, nil
 	})
@@ -2813,6 +2877,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
 
+		// Scheduled account tests (default disabled; opt-in)
+		SettingKeyScheduledAccountTestsEnabled: "false",
+
 		// Affiliate (邀请返利) feature (default disabled; opt-in)
 		SettingKeyAffiliateEnabled: "false",
 
@@ -3321,6 +3388,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+
+	// Scheduled account tests feature (default: disabled; strict true)
+	result.ScheduledAccountTestsEnabled = settings[SettingKeyScheduledAccountTestsEnabled] == "true"
 
 	// Affiliate (邀请返利) feature (default: disabled; strict true)
 	result.AffiliateEnabled = settings[SettingKeyAffiliateEnabled] == "true"

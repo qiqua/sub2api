@@ -199,6 +199,9 @@ type SystemSettings struct {
 	// OpenAI account scheduling
 	OpenAIAdvancedSchedulerEnabled bool `json:"openai_advanced_scheduler_enabled"`
 
+	// Scheduled account tests
+	ScheduledAccountTestsEnabled bool `json:"scheduled_account_tests_enabled"`
+
 	// Payment configuration
 	PaymentEnabled                   bool     `json:"payment_enabled"`
 	PaymentMinAmount                 float64  `json:"payment_min_amount"`

@@ -177,6 +177,9 @@ type SystemSettings struct {
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
+	// Scheduled account tests feature. Manual account health checks are unaffected.
+	ScheduledAccountTestsEnabled bool `json:"scheduled_account_tests_enabled"`
+
 	// Claude Code version check
 	MinClaudeCodeVersion string
 	MaxClaudeCodeVersion string

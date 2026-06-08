@@ -5538,6 +5538,12 @@ export default {
         payment: '支付设置',
       },
       features: {
+        scheduledAccountTests: {
+          title: '自动定时测号',
+          description: '控制系统是否自动执行账号定时测试计划。关闭后不会在启动或定时任务中自动扫号，手动批量检测不受影响。',
+          enabled: '启用自动定时测号',
+          enabledHint: '2H2G 或账号量很大时建议关闭，避免重启后大量到期计划同时执行导致 CPU 飙高。',
+        },
         channelMonitor: {
           title: '渠道监控',
           description: '定期对配置的渠道发起健康检查，向用户展示可用性与延迟。关闭后调度器停止扫描，用户端列表为空。',

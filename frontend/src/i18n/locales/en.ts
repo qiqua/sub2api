@@ -5378,6 +5378,12 @@ export default {
         payment: 'Payment',
       },
       features: {
+        scheduledAccountTests: {
+          title: 'Automatic Scheduled Account Tests',
+          description: 'Controls whether scheduled account test plans run automatically. Turning it off prevents startup and background account scans; manual batch health checks are unaffected.',
+          enabled: 'Enable automatic scheduled account tests',
+          enabledHint: 'Keep this off on 2C2G or large-account deployments to avoid CPU spikes when many due plans run after restart.',
+        },
         channelMonitor: {
           title: 'Channel Monitor',
           description: 'Periodically probe configured channels and surface availability / latency to users. Turning it off stops the scheduler and returns an empty list on the user page.',

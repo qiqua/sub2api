@@ -361,6 +361,11 @@ const (
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
 
+	// SettingKeyScheduledAccountTestsEnabled gates automatic scheduled account tests.
+	// Manual account health checks are not affected. Defaults to false to avoid startup
+	// bursts on instances with many due account test plans.
+	SettingKeyScheduledAccountTestsEnabled = "scheduled_account_tests_enabled"
+
 	// =========================
 	// Overload Cooldown (529)
 	// =========================

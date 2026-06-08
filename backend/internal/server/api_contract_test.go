@@ -665,6 +665,7 @@ func TestAPIContracts(t *testing.T) {
 					service.SettingPaymentVisibleMethodAlipayEnabled: "true",
 					service.SettingPaymentVisibleMethodWxpayEnabled:  "false",
 					"openai_advanced_scheduler_enabled":              "true",
+					service.SettingKeyScheduledAccountTestsEnabled:    "true",
 				})
 			},
 			method:     http.MethodGet,
@@ -846,6 +847,7 @@ func TestAPIContracts(t *testing.T) {
 					"payment_visible_method_alipay_enabled": true,
 					"payment_visible_method_wxpay_enabled": false,
 					"openai_advanced_scheduler_enabled": true,
+					"scheduled_account_tests_enabled": true,
 					"openai_codex_user_agent":           "",
 					"openai_allow_claude_code_codex_plugin": false,
 					"openai_fast_policy_settings": {
@@ -1084,6 +1086,7 @@ func TestAPIContracts(t *testing.T) {
 					"payment_visible_method_alipay_enabled": false,
 					"payment_visible_method_wxpay_enabled": false,
 					"openai_advanced_scheduler_enabled": false,
+					"scheduled_account_tests_enabled": false,
 					"openai_codex_user_agent":           "",
 					"openai_allow_claude_code_codex_plugin": false,
 					"openai_fast_policy_settings": {

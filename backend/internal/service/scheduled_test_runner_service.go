@@ -18,6 +18,7 @@ type ScheduledTestRunnerService struct {
 	scheduledSvc   *ScheduledTestService
 	accountTestSvc *AccountTestService
 	rateLimitSvc   *RateLimitService
+	settingSvc     *SettingService
 	cfg            *config.Config
 
 	cron      *cron.Cron
@@ -31,6 +32,7 @@ func NewScheduledTestRunnerService(
 	scheduledSvc *ScheduledTestService,
 	accountTestSvc *AccountTestService,
 	rateLimitSvc *RateLimitService,
+	settingSvc *SettingService,
 	cfg *config.Config,
 ) *ScheduledTestRunnerService {
 	return &ScheduledTestRunnerService{
@@ -38,6 +40,7 @@ func NewScheduledTestRunnerService(
 		scheduledSvc:   scheduledSvc,
 		accountTestSvc: accountTestSvc,
 		rateLimitSvc:   rateLimitSvc,
+		settingSvc:     settingSvc,
 		cfg:            cfg,
 	}
 }
@@ -63,7 +66,7 @@ func (s *ScheduledTestRunnerService) Start() {
 		}
 		s.cron = c
 		s.cron.Start()
-		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] started (tick=every minute)")
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] started (tick=every minute, gated by scheduled_account_tests_enabled)")
 	})
 }
 
@@ -85,11 +88,19 @@ func (s *ScheduledTestRunnerService) Stop() {
 }
 
 func (s *ScheduledTestRunnerService) runScheduled() {
+	if !s.isScheduledAccountTestsEnabled(context.Background()) {
+		return
+	}
+
 	// Delay 10s so execution lands at ~:10 of each minute instead of :00.
 	time.Sleep(10 * time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+
+	if !s.isScheduledAccountTestsEnabled(ctx) {
+		return
+	}
 
 	now := time.Now()
 	plans, err := s.planRepo.ListDue(ctx, now)
@@ -117,6 +128,13 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 	}
 
 	wg.Wait()
+}
+
+func (s *ScheduledTestRunnerService) isScheduledAccountTestsEnabled(ctx context.Context) bool {
+	if s == nil || s.settingSvc == nil {
+		return false
+	}
+	return s.settingSvc.IsScheduledAccountTestsEnabled(ctx)
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
