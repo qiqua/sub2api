@@ -440,6 +440,8 @@ export interface AccountHealthCheckJobRequest {
   filters?: AccountHealthCheckFilters
   model_id?: string
   concurrency?: number
+  limit?: number
+  cursor?: number
   include_unschedulable?: boolean
 }
 
@@ -457,6 +459,10 @@ export interface AccountHealthCheckJob {
   id: string
   status: 'queued' | 'running' | 'completed' | 'canceled' | 'failed'
   summary: AccountHealthCheckSummary
+  limit: number
+  cursor: number
+  next_cursor?: number
+  has_more: boolean
   error?: string
   created_at: string
   started_at?: string

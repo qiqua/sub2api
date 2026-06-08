@@ -43,8 +43,10 @@ const (
 )
 
 const (
-	defaultAccountHealthCheckConcurrency = 10
-	maxAccountHealthCheckConcurrency     = 30
+	defaultAccountHealthCheckConcurrency = 2
+	maxAccountHealthCheckConcurrency     = 5
+	defaultAccountHealthCheckLimit       = 200
+	maxAccountHealthCheckLimit           = 500
 	maxAccountHealthCheckJobs            = 30
 	accountHealthCheckPageSize           = 1000
 )
@@ -61,6 +63,8 @@ type AccountHealthCheckJobRequest struct {
 	ModelID                string                    `json:"model_id"`
 	Model                  string                    `json:"model"`
 	Concurrency            int                       `json:"concurrency"`
+	Limit                  int                       `json:"limit"`
+	Cursor                 int64                     `json:"cursor"`
 	IncludeUnschedulable   *bool                     `json:"include_unschedulable"`
 }
 
@@ -78,6 +82,10 @@ type AccountHealthCheckJob struct {
 	ID         string                    `json:"id"`
 	Status     string                    `json:"status"`
 	Summary    AccountHealthCheckSummary `json:"summary"`
+	Limit      int                       `json:"limit"`
+	Cursor     int64                     `json:"cursor"`
+	NextCursor int64                     `json:"next_cursor"`
+	HasMore    bool                      `json:"has_more"`
 	Error      string                    `json:"error,omitempty"`
 	CreatedAt  time.Time                 `json:"created_at"`
 	StartedAt  *time.Time                `json:"started_at,omitempty"`
@@ -105,6 +113,14 @@ type accountHealthCheckJobState struct {
 	cancel  context.CancelFunc
 }
 
+type accountHealthCheckBatch struct {
+	Accounts   []service.Account
+	Cursor     int64
+	Limit      int
+	NextCursor int64
+	HasMore    bool
+}
+
 type accountHealthCheckJobStore struct {
 	mu      sync.RWMutex
 	maxJobs int
@@ -120,7 +136,7 @@ func newAccountHealthCheckJobStore(maxJobs int) *accountHealthCheckJobStore {
 	}
 }
 
-func (s *accountHealthCheckJobStore) create(accounts []service.Account) AccountHealthCheckJob {
+func (s *accountHealthCheckJobStore) create(batch accountHealthCheckBatch) AccountHealthCheckJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -128,14 +144,18 @@ func (s *accountHealthCheckJobStore) create(accounts []service.Account) AccountH
 	jobID := fmt.Sprintf("%d", now.UnixNano())
 	state := &accountHealthCheckJobState{
 		job: AccountHealthCheckJob{
-			ID:        jobID,
-			Status:    accountHealthJobStatusQueued,
-			CreatedAt: now,
+			ID:         jobID,
+			Status:     accountHealthJobStatusQueued,
+			Limit:      batch.Limit,
+			Cursor:     batch.Cursor,
+			NextCursor: batch.Cursor,
+			HasMore:    batch.HasMore,
+			CreatedAt:  now,
 		},
-		results: make(map[int64]AccountHealthCheckResult, len(accounts)),
-		order:   make([]int64, 0, len(accounts)),
+		results: make(map[int64]AccountHealthCheckResult, len(batch.Accounts)),
+		order:   make([]int64, 0, len(batch.Accounts)),
 	}
-	for _, account := range accounts {
+	for _, account := range batch.Accounts {
 		if _, exists := state.results[account.ID]; exists {
 			continue
 		}
@@ -219,7 +239,11 @@ func (s *accountHealthCheckJobStore) updateResult(jobID string, result AccountHe
 	if !ok {
 		return
 	}
+	if state.job.Status == accountHealthJobStatusCanceled {
+		return
+	}
 	state.results[result.AccountID] = result
+	advanceAccountHealthCheckCursorLocked(state)
 	state.job.Summary = summarizeAccountHealthCheckResultsLocked(state)
 }
 
@@ -237,7 +261,11 @@ func (s *accountHealthCheckJobStore) finish(jobID, status, errMsg string) {
 	state.job.Status = status
 	state.job.Error = errMsg
 	state.job.FinishedAt = &now
+	advanceAccountHealthCheckCursorLocked(state)
 	state.job.Summary = summarizeAccountHealthCheckResultsLocked(state)
+	if status == accountHealthJobStatusCanceled && (state.job.Summary.Pending > 0 || state.job.Summary.Checking > 0) {
+		state.job.HasMore = true
+	}
 }
 
 func (s *accountHealthCheckJobStore) cancel(jobID string) (AccountHealthCheckJob, bool) {
@@ -256,7 +284,11 @@ func (s *accountHealthCheckJobStore) cancel(jobID string) (AccountHealthCheckJob
 	now := time.Now()
 	state.job.Status = accountHealthJobStatusCanceled
 	state.job.FinishedAt = &now
+	advanceAccountHealthCheckCursorLocked(state)
 	state.job.Summary = summarizeAccountHealthCheckResultsLocked(state)
+	if state.job.Summary.Pending > 0 || state.job.Summary.Checking > 0 {
+		state.job.HasMore = true
+	}
 	job := state.job
 	s.mu.Unlock()
 
@@ -300,6 +332,27 @@ func summarizeAccountHealthCheckResultsLocked(state *accountHealthCheckJobState)
 	return summary
 }
 
+func advanceAccountHealthCheckCursorLocked(state *accountHealthCheckJobState) {
+	nextCursor := state.job.Cursor
+	for _, accountID := range state.order {
+		result := state.results[accountID]
+		if !isAccountHealthCheckFinalStatus(result.Status) {
+			break
+		}
+		nextCursor = accountID
+	}
+	state.job.NextCursor = nextCursor
+}
+
+func isAccountHealthCheckFinalStatus(status string) bool {
+	switch status {
+	case AccountHealthStatusAvailable, AccountHealthStatusRateLimited, AccountHealthStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *AccountHandler) CreateHealthCheckJob(c *gin.Context) {
 	if h.accountTestService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "account test service unavailable")
@@ -312,12 +365,17 @@ func (h *AccountHandler) CreateHealthCheckJob(c *gin.Context) {
 		return
 	}
 
-	accounts, err := h.resolveAccountHealthCheckTargets(c.Request.Context(), &req)
+	limit := normalizeAccountHealthCheckLimit(req.Limit)
+	batch, err := h.resolveAccountHealthCheckTargets(c.Request.Context(), &req, limit)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if len(accounts) == 0 {
+	if len(batch.Accounts) == 0 {
+		if req.Cursor > 0 {
+			response.BadRequest(c, "no accounts matched after cursor")
+			return
+		}
 		response.BadRequest(c, "no accounts matched")
 		return
 	}
@@ -328,11 +386,11 @@ func (h *AccountHandler) CreateHealthCheckJob(c *gin.Context) {
 		modelID = strings.TrimSpace(req.Model)
 	}
 
-	job := accountHealthCheckJobs.create(accounts)
+	job := accountHealthCheckJobs.create(batch)
 	jobCtx, cancel := context.WithCancel(context.Background())
 	accountHealthCheckJobs.setCancel(job.ID, cancel)
 
-	go h.runAccountHealthCheckJob(jobCtx, job.ID, accounts, modelID, concurrency)
+	go h.runAccountHealthCheckJob(jobCtx, job.ID, batch.Accounts, modelID, concurrency)
 
 	response.Accepted(c, job)
 }
@@ -473,6 +531,9 @@ accountLoop:
 			accountHealthCheckJobs.updateResult(jobID, checking)
 
 			testResult, err := h.accountTestService.RunTestBackground(ctx, accountCopy.ID, modelID)
+			if ctx.Err() != nil {
+				return
+			}
 			finishedAt := time.Now()
 			message := ""
 			latencyMs := int64(0)
@@ -515,8 +576,8 @@ accountLoop:
 	accountHealthCheckJobs.finish(jobID, accountHealthJobStatusCompleted, "")
 }
 
-func (h *AccountHandler) resolveAccountHealthCheckTargets(ctx context.Context, req *AccountHealthCheckJobRequest) ([]service.Account, error) {
-	includeUnschedulable := true
+func (h *AccountHandler) resolveAccountHealthCheckTargets(ctx context.Context, req *AccountHealthCheckJobRequest, limit int) (accountHealthCheckBatch, error) {
+	includeUnschedulable := false
 	if req.IncludeUnschedulable != nil {
 		includeUnschedulable = *req.IncludeUnschedulable
 	}
@@ -525,7 +586,7 @@ func (h *AccountHandler) resolveAccountHealthCheckTargets(ctx context.Context, r
 		ids := dedupeAccountHealthCheckIDs(req.AccountIDs)
 		accounts, err := h.adminService.GetAccountsByIDs(ctx, ids)
 		if err != nil {
-			return nil, err
+			return accountHealthCheckBatch{}, err
 		}
 		byID := make(map[int64]*service.Account, len(accounts))
 		for _, account := range accounts {
@@ -539,24 +600,21 @@ func (h *AccountHandler) resolveAccountHealthCheckTargets(ctx context.Context, r
 			if !ok || account == nil {
 				continue
 			}
-			if !includeUnschedulable && !account.Schedulable {
-				continue
-			}
 			out = append(out, *account)
 		}
-		return out, nil
+		return buildAccountHealthCheckBatch(out, req.Cursor, limit, includeUnschedulable), nil
 	}
 
 	if req.Filters == nil {
-		return nil, nil
+		return accountHealthCheckBatch{Cursor: req.Cursor, Limit: limit}, nil
 	}
 
 	groupID, err := accountHealthCheckGroupID(req.Filters.Group)
 	if err != nil {
-		return nil, err
+		return accountHealthCheckBatch{}, err
 	}
 
-	out := make([]service.Account, 0)
+	out := make([]service.Account, 0, limit+1)
 	for page := 1; ; page++ {
 		accounts, total, err := h.adminService.ListAccounts(
 			ctx,
@@ -568,23 +626,32 @@ func (h *AccountHandler) resolveAccountHealthCheckTargets(ctx context.Context, r
 			req.Filters.Search,
 			groupID,
 			req.Filters.PrivacyMode,
-			"name",
+			"id",
 			"asc",
 		)
 		if err != nil {
-			return nil, err
+			return accountHealthCheckBatch{}, err
 		}
 		for _, account := range accounts {
+			if account.ID <= req.Cursor {
+				continue
+			}
 			if !includeUnschedulable && !account.Schedulable {
 				continue
 			}
 			out = append(out, account)
+			if len(out) > limit {
+				break
+			}
+		}
+		if len(out) > limit {
+			break
 		}
 		if int64(page*accountHealthCheckPageSize) >= total || len(accounts) == 0 {
 			break
 		}
 	}
-	return out, nil
+	return buildAccountHealthCheckBatch(out, req.Cursor, limit, true), nil
 }
 
 func accountHealthCheckGroupID(group string) (int64, error) {
@@ -610,6 +677,50 @@ func normalizeAccountHealthCheckConcurrency(concurrency int) int {
 		return maxAccountHealthCheckConcurrency
 	}
 	return concurrency
+}
+
+func normalizeAccountHealthCheckLimit(limit int) int {
+	if limit <= 0 {
+		return defaultAccountHealthCheckLimit
+	}
+	if limit > maxAccountHealthCheckLimit {
+		return maxAccountHealthCheckLimit
+	}
+	return limit
+}
+
+func buildAccountHealthCheckBatch(accounts []service.Account, cursor int64, limit int, includeUnschedulable bool) accountHealthCheckBatch {
+	limit = normalizeAccountHealthCheckLimit(limit)
+	sortedAccounts := append([]service.Account(nil), accounts...)
+	sort.SliceStable(sortedAccounts, func(i, j int) bool {
+		return sortedAccounts[i].ID < sortedAccounts[j].ID
+	})
+
+	out := make([]service.Account, 0, limit)
+	nextCursor := cursor
+	hasMore := false
+	for _, account := range sortedAccounts {
+		if account.ID <= cursor {
+			continue
+		}
+		if !includeUnschedulable && !account.Schedulable {
+			continue
+		}
+		if len(out) >= limit {
+			hasMore = true
+			break
+		}
+		out = append(out, account)
+		nextCursor = account.ID
+	}
+
+	return accountHealthCheckBatch{
+		Accounts:   out,
+		Cursor:     cursor,
+		Limit:      limit,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}
 }
 
 func dedupeAccountHealthCheckIDs(ids []int64) []int64 {

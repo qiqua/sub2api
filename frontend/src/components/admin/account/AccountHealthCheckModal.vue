@@ -8,7 +8,7 @@
   >
     <div class="space-y-5">
       <div class="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-900/50 dark:bg-blue-900/20 dark:text-blue-100">
-        后端会按并发批量检测账号可用性，并把结果分为可用、限流、不可用。检测不会自动删除账号，删除/禁用等操作需要你二次确认。
+        后端会按小批次检测账号可用性，并把结果分为可用、限流、不可用。默认每批 200 个、并发 2，完成后点“继续下一批”才会接着扫，避免一次扫太多把服务器打满。
       </div>
 
       <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
@@ -17,13 +17,13 @@
             <div>
               <div class="text-base font-semibold text-gray-900 dark:text-white">检测范围</div>
               <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                当前选中 {{ selectedIds.length }} 个账号，当前筛选会覆盖整个列表结果。
+                当前选中 {{ selectedIds.length }} 个账号；当前筛选每次只检测本批账号，下一批会自动跳过已扫 ID。
               </div>
             </div>
             <button class="btn btn-primary" :disabled="starting || isRunning" @click="startJob">
               <span v-if="starting">创建中...</span>
               <span v-else-if="isRunning">检测中</span>
-              <span v-else>开始检测</span>
+              <span v-else>{{ startButtonLabel }}</span>
             </button>
           </div>
 
@@ -38,12 +38,12 @@
               </span>
             </label>
             <label class="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors"
-              :class="scope === 'filtered' ? 'border-primary-300 bg-primary-50 dark:border-primary-700 dark:bg-primary-900/20' : 'border-gray-200 dark:border-dark-600'"
+                :class="scope === 'filtered' ? 'border-primary-300 bg-primary-50 dark:border-primary-700 dark:bg-primary-900/20' : 'border-gray-200 dark:border-dark-600'"
             >
               <input v-model="scope" type="radio" value="filtered" class="mt-1" :disabled="isRunning" />
               <span>
                 <span class="block text-sm font-medium text-gray-900 dark:text-white">检测当前筛选</span>
-                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">会检测当前分组、平台、状态、搜索条件下的所有账号。</span>
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">只检测当前分组、平台、状态、搜索条件下的本批账号，不会一次扫完全部。</span>
               </span>
             </label>
           </div>
@@ -55,12 +55,25 @@
                 v-model.number="concurrency"
                 type="number"
                 min="1"
-                max="30"
+                max="5"
                 class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-dark-600 dark:bg-dark-700 dark:text-white"
                 :disabled="isRunning"
               />
+              <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">建议 1-2；后端最高限制 5。</span>
             </label>
-            <label class="block md:col-span-2">
+            <label class="block">
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">本批数量</span>
+              <input
+                v-model.number="batchLimit"
+                type="number"
+                min="1"
+                max="500"
+                class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-dark-600 dark:bg-dark-700 dark:text-white"
+                :disabled="isRunning"
+              />
+              <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">建议 100-200；后端最高限制 500。</span>
+            </label>
+            <label class="block">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">测试模型（可选）</span>
               <input
                 v-model.trim="modelId"
@@ -76,6 +89,12 @@
             <input v-model="includeUnschedulable" type="checkbox" class="rounded border-gray-300 text-primary-600" :disabled="isRunning" />
             包含已禁用调度账号
           </label>
+
+          <div v-if="job" class="rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600 dark:border-dark-600 dark:bg-dark-700/60 dark:text-gray-300">
+            本批游标：{{ job.cursor || 0 }}，本批上限：{{ job.limit || batchLimit }}，当前已推进到 ID {{ job.next_cursor ?? nextCursor ?? 0 }}。
+            <span v-if="job.has_more">当前筛选还有未检测账号。</span>
+            <span v-else-if="job.status === 'completed'">当前筛选本轮已经扫完。</span>
+          </div>
         </div>
 
         <div class="space-y-3 rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-600 dark:bg-dark-800">
@@ -88,7 +107,12 @@
             <span>已完成 {{ completedCount }}</span>
             <span>总计 {{ summary.total }}</span>
           </div>
-          <button v-if="isRunning" class="btn btn-secondary w-full" @click="cancelJob">取消检测</button>
+          <button v-if="isRunning" class="btn btn-secondary w-full" :disabled="canceling" @click="cancelJob">
+            {{ canceling ? '取消中...' : '取消检测' }}
+          </button>
+          <button v-else-if="canContinue" class="btn btn-primary w-full" :disabled="starting" @click="startJob">
+            继续下一批
+          </button>
         </div>
       </div>
 
@@ -219,6 +243,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import type {
   AccountHealthCheckFilters,
   AccountHealthCheckJob,
@@ -238,16 +263,19 @@ const emit = defineEmits<{
 
 const appStore = useAppStore()
 const scope = ref<'selected' | 'filtered'>('filtered')
-const concurrency = ref(10)
+const concurrency = ref(2)
+const batchLimit = ref(200)
 const modelId = ref('')
-const includeUnschedulable = ref(true)
+const includeUnschedulable = ref(false)
 const job = ref<AccountHealthCheckJob | null>(null)
 const results = ref<AccountHealthCheckResult[]>([])
 const resultStatus = ref('')
 const resultCategory = ref('')
 const checkedResultIds = ref<number[]>([])
 const starting = ref(false)
+const canceling = ref(false)
 const actionLoading = ref(false)
+const nextCursor = ref<number | null>(null)
 let pollTimer: number | undefined
 
 const emptySummary = {
@@ -262,12 +290,16 @@ const emptySummary = {
 
 const summary = computed(() => job.value?.summary ?? emptySummary)
 const isRunning = computed(() => ['queued', 'running'].includes(job.value?.status || ''))
+const canContinue = computed(() => {
+  return !isRunning.value && Boolean(job.value?.has_more)
+})
 const completedCount = computed(() => summary.value.available + summary.value.rate_limited + summary.value.unavailable)
 const progressPercent = computed(() => {
   if (!summary.value.total) return 0
   return Math.min(100, Math.round((completedCount.value / summary.value.total) * 100))
 })
 const jobStatusLabel = computed(() => {
+  if (canceling.value) return '取消中'
   switch (job.value?.status) {
     case 'queued': return '排队中'
     case 'running': return '检测中'
@@ -292,16 +324,35 @@ const filteredResults = computed(() => {
 const allFilteredChecked = computed(() => {
   return filteredResults.value.length > 0 && filteredResults.value.every(item => checkedResultIds.value.includes(item.account_id))
 })
+const startButtonLabel = computed(() => {
+  if (canContinue.value) return '继续下一批'
+  return '开始检测本批'
+})
 
 watch(
   () => props.show,
   (visible) => {
     if (visible) {
       scope.value = props.selectedIds.length > 0 ? 'selected' : 'filtered'
+      resetBatchCursor()
     } else {
       stopPolling()
     }
   }
+)
+
+watch(scope, () => {
+  resetBatchCursor()
+})
+
+watch(
+  () => props.filters,
+  () => {
+    if (scope.value === 'filtered') {
+      resetBatchCursor()
+    }
+  },
+  { deep: true }
 )
 
 onUnmounted(() => {
@@ -327,6 +378,9 @@ const stopPolling = () => {
 const refreshJob = async () => {
   if (!job.value) return
   job.value = await adminAPI.accounts.getHealthCheckJob(job.value.id)
+  if (typeof job.value.next_cursor === 'number') {
+    nextCursor.value = job.value.next_cursor
+  }
   await refreshResults()
   if (!isRunning.value) {
     stopPolling()
@@ -345,21 +399,26 @@ const startJob = async () => {
     return
   }
   starting.value = true
+  canceling.value = false
   checkedResultIds.value = []
   results.value = []
+  const cursor = canContinue.value ? (nextCursor.value ?? job.value?.next_cursor ?? 0) : 0
   try {
     job.value = await adminAPI.accounts.createHealthCheckJob({
       account_ids: scope.value === 'selected' ? props.selectedIds : undefined,
       filters: scope.value === 'filtered' ? props.filters : undefined,
       model_id: modelId.value || undefined,
-      concurrency: concurrency.value,
+      concurrency: clampNumber(concurrency.value, 1, 5, 2),
+      limit: clampNumber(batchLimit.value, 1, 500, 200),
+      cursor,
       include_unschedulable: includeUnschedulable.value
     })
+    nextCursor.value = job.value.next_cursor ?? null
     await refreshResults()
     startPolling()
   } catch (error) {
     console.error('Failed to create account health check job:', error)
-    appStore.showError(String(error))
+    appStore.showError(extractApiErrorMessage(error, '创建检测任务失败'))
   } finally {
     starting.value = false
   }
@@ -367,12 +426,21 @@ const startJob = async () => {
 
 const cancelJob = async () => {
   if (!job.value) return
+  canceling.value = true
+  stopPolling()
   try {
     job.value = await adminAPI.accounts.cancelHealthCheckJob(job.value.id)
-    stopPolling()
+    if (typeof job.value.next_cursor === 'number') {
+      nextCursor.value = job.value.next_cursor
+    }
+    canceling.value = false
   } catch (error) {
     console.error('Failed to cancel account health check job:', error)
-    appStore.showError(String(error))
+    canceling.value = false
+    if (isRunning.value) {
+      startPolling()
+    }
+    appStore.showError(extractApiErrorMessage(error, '取消检测失败'))
   }
 }
 
@@ -399,25 +467,49 @@ const toggleAllFilteredResults = () => {
   }
 }
 
-const runAction = async (runner: (ids: number[]) => Promise<{ success: number; failed: number }>, successText: string) => {
+const runAction = async (
+  runner: (ids: number[]) => Promise<{ success: number; failed: number; success_ids?: number[] }>,
+  successText: string,
+  options?: { removeSucceeded?: boolean }
+) => {
   const ids = [...checkedResultIds.value]
   if (ids.length === 0) return
   actionLoading.value = true
   try {
     const result = await runner(ids)
+    const successIds = result.success_ids?.length ? result.success_ids : (result.failed === 0 ? ids : [])
     if (result.failed > 0) {
       appStore.showError(`操作部分成功：成功 ${result.success}，失败 ${result.failed}`)
     } else {
       appStore.showSuccess(successText.replace('{count}', String(result.success)))
-      checkedResultIds.value = []
     }
+    if (options?.removeSucceeded && successIds.length > 0) {
+      const remove = new Set(successIds)
+      results.value = results.value.filter(item => !remove.has(item.account_id))
+    }
+    checkedResultIds.value = checkedResultIds.value.filter(id => !successIds.includes(id))
     emit('changed')
   } catch (error) {
     console.error('Failed to run account health check action:', error)
-    appStore.showError(String(error))
+    appStore.showError(extractApiErrorMessage(error, '操作失败'))
   } finally {
     actionLoading.value = false
   }
+}
+
+const resetBatchCursor = () => {
+  nextCursor.value = null
+  job.value = null
+  results.value = []
+  checkedResultIds.value = []
+  resultStatus.value = ''
+  resultCategory.value = ''
+  canceling.value = false
+}
+
+const clampNumber = (value: number, min: number, max: number, fallback: number) => {
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.floor(value)))
 }
 
 const disableSelected = async () => {
@@ -446,7 +538,8 @@ const deleteSelected = async () => {
   if (!window.confirm(`确认删除 ${ids.length} 个账号？此操作不可恢复。`)) return
   await runAction(
     ids => adminAPI.accounts.batchDelete(ids),
-    '已删除 {count} 个账号'
+    '已删除 {count} 个账号',
+    { removeSucceeded: true }
   )
 }
 

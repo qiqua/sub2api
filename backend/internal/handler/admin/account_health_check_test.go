@@ -1,6 +1,100 @@
 package admin
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
+)
+
+func TestNormalizeAccountHealthCheckConcurrency(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{name: "default is small server safe", in: 0, want: 2},
+		{name: "negative uses default", in: -10, want: 2},
+		{name: "explicit low value is preserved", in: 1, want: 1},
+		{name: "max is accepted", in: 5, want: 5},
+		{name: "large value is capped", in: 30, want: 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeAccountHealthCheckConcurrency(tt.in); got != tt.want {
+				t.Fatalf("normalizeAccountHealthCheckConcurrency(%d) = %d, want %d", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeAccountHealthCheckLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{name: "default batch is small server safe", in: 0, want: 200},
+		{name: "negative uses default", in: -10, want: 200},
+		{name: "explicit low value is preserved", in: 50, want: 50},
+		{name: "max is accepted", in: 500, want: 500},
+		{name: "large value is capped", in: 10000, want: 500},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeAccountHealthCheckLimit(tt.in); got != tt.want {
+				t.Fatalf("normalizeAccountHealthCheckLimit(%d) = %d, want %d", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildAccountHealthCheckBatchSkipsCursorAndUnschedulable(t *testing.T) {
+	accounts := []service.Account{
+		{ID: 1, Name: "one", Schedulable: true},
+		{ID: 2, Name: "two", Schedulable: false},
+		{ID: 3, Name: "three", Schedulable: true},
+		{ID: 4, Name: "four", Schedulable: true},
+		{ID: 5, Name: "five", Schedulable: true},
+	}
+
+	got := buildAccountHealthCheckBatch(accounts, 2, 2, false)
+	if len(got.Accounts) != 2 {
+		t.Fatalf("batch size = %d, want 2", len(got.Accounts))
+	}
+	if got.Accounts[0].ID != 3 || got.Accounts[1].ID != 4 {
+		t.Fatalf("batch account IDs = [%d,%d], want [3,4]", got.Accounts[0].ID, got.Accounts[1].ID)
+	}
+	if got.NextCursor != 4 {
+		t.Fatalf("next cursor = %d, want 4", got.NextCursor)
+	}
+	if !got.HasMore {
+		t.Fatal("has more = false, want true")
+	}
+}
+
+func TestBuildAccountHealthCheckBatchIncludesUnschedulableWhenRequested(t *testing.T) {
+	accounts := []service.Account{
+		{ID: 1, Name: "one", Schedulable: true},
+		{ID: 2, Name: "two", Schedulable: false},
+		{ID: 3, Name: "three", Schedulable: true},
+	}
+
+	got := buildAccountHealthCheckBatch(accounts, 0, 3, true)
+	if len(got.Accounts) != 3 {
+		t.Fatalf("batch size = %d, want 3", len(got.Accounts))
+	}
+	if got.Accounts[1].ID != 2 {
+		t.Fatalf("second account ID = %d, want unschedulable account 2", got.Accounts[1].ID)
+	}
+	if got.NextCursor != 3 {
+		t.Fatalf("next cursor = %d, want 3", got.NextCursor)
+	}
+	if got.HasMore {
+		t.Fatal("has more = true, want false")
+	}
+}
 
 func TestClassifyAccountHealthCheckError(t *testing.T) {
 	tests := []struct {
