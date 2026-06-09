@@ -11,7 +11,7 @@
         <div>
           <div class="text-sm font-medium text-gray-500 dark:text-gray-400">可用账号总数</div>
           <div class="mt-2 text-4xl font-semibold text-gray-950 dark:text-white">{{ displayTotal }}</div>
-          <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">基于当前筛选条件和跳过规则计算</div>
+          <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">会自动巡检当前筛选范围内全部符合条件账号</div>
         </div>
 
         <div class="min-w-0 flex-1">
@@ -54,10 +54,10 @@
         <div class="panel">
           <div class="panel-header">
             <div>
-              <div class="panel-title">后台清理策略</div>
+              <div class="panel-title">巡检范围与自动处置</div>
               <div class="panel-subtitle">
-                这些配置存数据库。默认不会开机扫号；只有你点击开始或保持 enabled=true 才会继续。
-                当前选中 {{ selectedCount }} 个；巡检按当前筛选范围执行，不受列表 50 条分页限制。
+                点击开始后会自动扫完整个当前筛选范围，不受列表 50 条分页限制。
+                单批数量、并发和间隔只是限速保护，用来防止 2H2G 服务器被瞬间打满。
               </div>
             </div>
             <button class="btn btn-secondary btn-sm" :disabled="saving || running" @click="saveSettings">
@@ -67,19 +67,19 @@
 
           <div class="grid gap-4 lg:grid-cols-4">
             <label class="field">
-              <span>每批扫描</span>
+              <span>单批限速数量</span>
               <input v-model.number="form.batch_limit" type="number" min="1" max="500" :disabled="running" />
-              <small>建议 50-100，后端上限 500。</small>
+              <small>不是只扫这一批；后台会自动继续直到扫完整个范围。建议 50-100。</small>
             </label>
             <label class="field">
-              <span>并发数</span>
+              <span>检测并发</span>
               <input v-model.number="form.concurrency" type="number" min="1" max="5" :disabled="running" />
               <small>2H2G 建议保持 1。</small>
             </label>
             <label class="field">
-              <span>批次间隔秒</span>
+              <span>限速间隔秒</span>
               <input v-model.number="form.batch_sleep_seconds" type="number" min="1" max="3600" :disabled="running" />
-              <small>批与批之间休眠，避免 CPU 瞬间打满。</small>
+              <small>每个后台小批次之间休眠，避免 CPU 瞬间打满。</small>
             </label>
             <label class="field">
               <span>跳过已扫小时</span>
@@ -120,7 +120,7 @@
           </div>
 
           <div class="mt-4 rounded-xl bg-gray-50 p-3 text-sm text-gray-600 dark:bg-dark-700/60 dark:text-gray-300">
-            当前筛选：{{ filterSummary }}。后端按账号 ID 游标继续推进，cursor={{ form.cursor || 0 }}。
+            当前筛选：{{ filterSummary }}。后台会从上次进度继续自动推进；进度游标 cursor={{ form.cursor || 0 }}。
           </div>
         </div>
 
@@ -259,7 +259,6 @@ const emptySummary: AccountInspectionSummary = {
   by_category: {}
 }
 
-const selectedCount = computed(() => props.selectedIds.length)
 const summary = computed(() => status.value?.summary ?? emptySummary)
 const candidateTotal = computed(() => status.value?.candidate_total ?? 0)
 const displayTotal = computed(() => summary.value.total || candidateTotal.value)
