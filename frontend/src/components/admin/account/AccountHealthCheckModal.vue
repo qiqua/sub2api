@@ -1,233 +1,188 @@
 <template>
   <BaseDialog
     :show="show"
-    title="批量检测账号"
+    title="Auth Files 巡检"
     width="full"
     :close-on-click-outside="false"
     @close="handleClose"
   >
-    <div class="space-y-5">
-      <div class="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-900/50 dark:bg-blue-900/20 dark:text-blue-100">
-        后端会按小批次检测账号可用性，并把结果分为可用、限流、不可用。默认每批 200 个、并发 2，完成后点“继续下一批”才会接着扫，避免一次扫太多把服务器打满。
-      </div>
+    <div class="inspection-shell">
+      <section class="inspection-hero">
+        <div>
+          <div class="text-sm font-medium text-gray-500 dark:text-gray-400">可用账号总数</div>
+          <div class="mt-2 text-4xl font-semibold text-gray-950 dark:text-white">{{ displayTotal }}</div>
+          <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">基于当前筛选条件和跳过规则计算</div>
+        </div>
 
-      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <div class="space-y-4 rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-600 dark:bg-dark-800">
-          <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm font-semibold text-gray-700 dark:text-gray-200">已巡检 / 总数</div>
+            <div class="text-lg font-semibold text-gray-950 dark:text-white">
+              {{ summary.checked }} / {{ displayTotal }} ({{ progressPercent }}%)
+            </div>
+          </div>
+          <div class="mt-3 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+            <div class="h-full rounded-full bg-emerald-500 transition-all duration-500" :style="{ width: `${progressPercent}%` }" />
+          </div>
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500 dark:text-gray-400">
+            <span>巡检时间：{{ runTimeLabel }}</span>
+            <span>{{ runStateLabel }}</span>
+          </div>
+        </div>
+
+        <div class="flex w-full flex-col gap-2 sm:w-44">
+          <button class="btn btn-primary w-full" :disabled="loading || saving || starting || running" @click="start">
+            <span v-if="starting">启动中...</span>
+            <span v-else-if="running">巡检中</span>
+            <span v-else>开始巡检</span>
+          </button>
+          <button class="btn btn-secondary w-full" :disabled="loading || stopping || !running" @click="stop">
+            {{ stopping ? '取消中...' : '取消巡检' }}
+          </button>
+        </div>
+      </section>
+
+      <section class="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div v-for="card in metricCards" :key="card.key" class="metric-card">
+          <div class="text-sm font-semibold text-gray-600 dark:text-gray-300">{{ card.label }}</div>
+          <div :class="['mt-2 text-3xl font-bold', card.valueClass]">{{ card.value }}</div>
+          <div class="mt-1 text-sm text-gray-400">{{ card.percent }}%</div>
+        </div>
+      </section>
+
+      <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div class="panel">
+          <div class="panel-header">
             <div>
-              <div class="text-base font-semibold text-gray-900 dark:text-white">检测范围</div>
-              <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                当前选中 {{ selectedIds.length }} 个账号；当前筛选每次只检测本批账号，下一批会自动跳过已扫 ID。
+              <div class="panel-title">后台清理策略</div>
+              <div class="panel-subtitle">
+                这些配置存数据库。默认不会开机扫号；只有你点击开始或保持 enabled=true 才会继续。
+                当前选中 {{ selectedCount }} 个；巡检按当前筛选范围执行，不受列表 50 条分页限制。
               </div>
             </div>
-            <button class="btn btn-primary" :disabled="starting || isRunning" @click="startJob">
-              <span v-if="starting">创建中...</span>
-              <span v-else-if="isRunning">检测中</span>
-              <span v-else>{{ startButtonLabel }}</span>
+            <button class="btn btn-secondary btn-sm" :disabled="saving || running" @click="saveSettings">
+              {{ saving ? '保存中...' : '保存配置' }}
             </button>
           </div>
 
-          <div class="grid gap-3 md:grid-cols-2">
-            <label class="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors"
-              :class="scope === 'selected' ? 'border-primary-300 bg-primary-50 dark:border-primary-700 dark:bg-primary-900/20' : 'border-gray-200 dark:border-dark-600'"
-            >
-              <input v-model="scope" type="radio" value="selected" class="mt-1" :disabled="selectedIds.length === 0 || isRunning" />
+          <div class="grid gap-4 lg:grid-cols-4">
+            <label class="field">
+              <span>每批扫描</span>
+              <input v-model.number="form.batch_limit" type="number" min="1" max="500" :disabled="running" />
+              <small>建议 50-100，后端上限 500。</small>
+            </label>
+            <label class="field">
+              <span>并发数</span>
+              <input v-model.number="form.concurrency" type="number" min="1" max="5" :disabled="running" />
+              <small>2H2G 建议保持 1。</small>
+            </label>
+            <label class="field">
+              <span>批次间隔秒</span>
+              <input v-model.number="form.batch_sleep_seconds" type="number" min="1" max="3600" :disabled="running" />
+              <small>批与批之间休眠，避免 CPU 瞬间打满。</small>
+            </label>
+            <label class="field">
+              <span>跳过已扫小时</span>
+              <input v-model.number="form.recheck_after_hours" type="number" min="1" max="2160" :disabled="running" />
+              <small>默认 168 小时，扫过的下次跳过。</small>
+            </label>
+          </div>
+
+          <div class="mt-4 grid gap-3 lg:grid-cols-2">
+            <label class="toggle-row">
+              <input v-model="form.include_unschedulable" type="checkbox" :disabled="running" />
               <span>
-                <span class="block text-sm font-medium text-gray-900 dark:text-white">检测选中账号</span>
-                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">适合先手动框选一批账号再处理。</span>
+                <strong>包含已关闭调度账号</strong>
+                <small>用于检查之前被关掉的账号是否恢复。</small>
               </span>
             </label>
-            <label class="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors"
-                :class="scope === 'filtered' ? 'border-primary-300 bg-primary-50 dark:border-primary-700 dark:bg-primary-900/20' : 'border-gray-200 dark:border-dark-600'"
-            >
-              <input v-model="scope" type="radio" value="filtered" class="mt-1" :disabled="isRunning" />
+            <label class="toggle-row">
+              <input v-model="form.delete_auth_invalid" type="checkbox" :disabled="running" />
               <span>
-                <span class="block text-sm font-medium text-gray-900 dark:text-white">检测当前筛选</span>
-                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">只检测当前分组、平台、状态、搜索条件下的本批账号，不会一次扫完全部。</span>
+                <strong>扫出 401 / refresh token 失效后删除</strong>
+                <small>只对明确认证失效执行删除，402 不会默认删除。</small>
+              </span>
+            </label>
+            <label class="toggle-row">
+              <input v-model="form.disable_quota_exhausted" type="checkbox" :disabled="running" />
+              <span>
+                <strong>扫出额度不足后关闭调度</strong>
+                <small>额度不足归为“限流”，不算不可用。</small>
+              </span>
+            </label>
+            <label class="toggle-row">
+              <input v-model="form.restore_auto_disabled" type="checkbox" :disabled="running" />
+              <span>
+                <strong>额度恢复后自动开放</strong>
+                <small>只恢复本巡检自动关闭的账号，不动你手动关闭的账号。</small>
               </span>
             </label>
           </div>
 
-          <div class="grid gap-3 md:grid-cols-3">
-            <label class="block">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">并发数</span>
-              <input
-                v-model.number="concurrency"
-                type="number"
-                min="1"
-                max="5"
-                class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-dark-600 dark:bg-dark-700 dark:text-white"
-                :disabled="isRunning"
-              />
-              <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">建议 1-2；后端最高限制 5。</span>
-            </label>
-            <label class="block">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">本批数量</span>
-              <input
-                v-model.number="batchLimit"
-                type="number"
-                min="1"
-                max="500"
-                class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-dark-600 dark:bg-dark-700 dark:text-white"
-                :disabled="isRunning"
-              />
-              <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">建议 100-200；后端最高限制 500。</span>
-            </label>
-            <label class="block">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">测试模型（可选）</span>
-              <input
-                v-model.trim="modelId"
-                type="text"
-                placeholder="留空使用后端默认测试模型"
-                class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-dark-600 dark:bg-dark-700 dark:text-white"
-                :disabled="isRunning"
-              />
-            </label>
-          </div>
-
-          <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-            <input v-model="includeUnschedulable" type="checkbox" class="rounded border-gray-300 text-primary-600" :disabled="isRunning" />
-            包含已禁用调度账号
-          </label>
-
-          <div v-if="job" class="rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600 dark:border-dark-600 dark:bg-dark-700/60 dark:text-gray-300">
-            本批游标：{{ job.cursor || 0 }}，本批上限：{{ job.limit || batchLimit }}，当前已推进到 ID {{ job.next_cursor ?? nextCursor ?? 0 }}。
-            <span v-if="job.has_more">当前筛选还有未检测账号。</span>
-            <span v-else-if="job.status === 'completed'">当前筛选本轮已经扫完。</span>
+          <div class="mt-4 rounded-xl bg-gray-50 p-3 text-sm text-gray-600 dark:bg-dark-700/60 dark:text-gray-300">
+            当前筛选：{{ filterSummary }}。后端按账号 ID 游标继续推进，cursor={{ form.cursor || 0 }}。
           </div>
         </div>
 
-        <div class="space-y-3 rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-600 dark:bg-dark-800">
-          <div class="text-sm font-semibold text-gray-900 dark:text-white">任务状态</div>
-          <div class="text-2xl font-semibold text-gray-900 dark:text-white">{{ jobStatusLabel }}</div>
-          <div class="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
-            <div class="h-full rounded-full bg-primary-500 transition-all" :style="{ width: `${progressPercent}%` }"></div>
+        <div class="panel">
+          <div class="panel-title">自动处置结果</div>
+          <div class="mt-4 grid grid-cols-3 gap-3">
+            <div class="action-stat">
+              <span>已删除</span>
+              <strong>{{ summary.deleted }}</strong>
+            </div>
+            <div class="action-stat">
+              <span>已关闭</span>
+              <strong>{{ summary.disabled }}</strong>
+            </div>
+            <div class="action-stat">
+              <span>已恢复</span>
+              <strong>{{ summary.restored }}</strong>
+            </div>
           </div>
-          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>已完成 {{ completedCount }}</span>
-            <span>总计 {{ summary.total }}</span>
+          <div v-if="summary.action_failed > 0" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-200">
+            有 {{ summary.action_failed }} 个账号处置失败，请在最近结果里查看原因。
           </div>
-          <button v-if="isRunning" class="btn btn-secondary w-full" :disabled="canceling" @click="cancelJob">
-            {{ canceling ? '取消中...' : '取消检测' }}
-          </button>
-          <button v-else-if="canContinue" class="btn btn-primary w-full" :disabled="starting" @click="startJob">
-            继续下一批
-          </button>
         </div>
-      </div>
+      </section>
 
-      <div class="grid gap-3 md:grid-cols-4">
-        <div class="health-card">
-          <div class="text-xs text-gray-500 dark:text-gray-400">可用</div>
-          <div class="mt-1 text-2xl font-semibold text-emerald-600 dark:text-emerald-300">{{ summary.available }}</div>
-        </div>
-        <div class="health-card">
-          <div class="text-xs text-gray-500 dark:text-gray-400">限流</div>
-          <div class="mt-1 text-2xl font-semibold text-amber-600 dark:text-amber-300">{{ summary.rate_limited }}</div>
-        </div>
-        <div class="health-card">
-          <div class="text-xs text-gray-500 dark:text-gray-400">不可用</div>
-          <div class="mt-1 text-2xl font-semibold text-rose-600 dark:text-rose-300">{{ summary.unavailable }}</div>
-        </div>
-        <div class="health-card">
-          <div class="text-xs text-gray-500 dark:text-gray-400">待检测/检测中</div>
-          <div class="mt-1 text-2xl font-semibold text-gray-700 dark:text-gray-200">{{ summary.pending + summary.checking }}</div>
-        </div>
-      </div>
-
-      <div v-if="categoryRows.length > 0" class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-600 dark:bg-dark-800">
-        <div class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">错误分类</div>
-        <div class="flex flex-wrap gap-2">
-          <button
-            v-for="row in categoryRows"
-            :key="row.category"
-            class="rounded-full border px-3 py-1 text-xs transition-colors"
-            :class="resultCategory === row.category ? 'border-primary-400 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200' : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-dark-700'"
-            @click="resultCategory = resultCategory === row.category ? '' : row.category"
-          >
-            {{ categoryLabel(row.category) }}: {{ row.count }}
-          </button>
-        </div>
-      </div>
-
-      <div class="rounded-xl border border-gray-200 bg-white dark:border-dark-600 dark:bg-dark-800">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-4 dark:border-dark-600">
-          <div>
-            <div class="text-sm font-semibold text-gray-900 dark:text-white">检测结果</div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">已选中 {{ checkedResultIds.length }} 个结果</div>
+      <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_32rem]">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">最近结果</div>
+              <div class="panel-subtitle">展示最新 30 条巡检结果，删除账号后仍保留本次结果记录。</div>
+            </div>
           </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <select v-model="resultStatus" class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-dark-600 dark:bg-dark-700 dark:text-white">
-              <option value="">全部状态</option>
-              <option value="available">可用</option>
-              <option value="rate_limited">限流</option>
-              <option value="unavailable">不可用</option>
-            </select>
-            <button class="btn btn-secondary btn-sm" :disabled="filteredResults.length === 0" @click="toggleAllFilteredResults">
-              {{ allFilteredChecked ? '取消当前筛选' : '选择当前筛选' }}
-            </button>
-            <button class="btn btn-warning btn-sm" :disabled="checkedResultIds.length === 0 || actionLoading" @click="disableSelected">
-              禁用调度
-            </button>
-            <button class="btn btn-secondary btn-sm" :disabled="checkedResultIds.length === 0 || actionLoading" @click="clearErrorSelected">
-              清除错误
-            </button>
-            <button class="btn btn-secondary btn-sm" :disabled="checkedResultIds.length === 0 || actionLoading" @click="refreshSelected">
-              刷新 token
-            </button>
-            <button class="btn btn-danger btn-sm" :disabled="checkedResultIds.length === 0 || actionLoading" @click="deleteSelected">
-              删除
-            </button>
+
+          <div class="result-list">
+            <div v-if="recentResults.length === 0" class="empty-state">暂无结果，点击开始巡检后这里会刷新。</div>
+            <div v-for="item in recentResults" :key="item.id || `${item.run_id}-${item.account_id}`" class="result-row">
+              <div class="min-w-0">
+                <div class="truncate font-semibold text-gray-900 dark:text-white">{{ item.name || item.account_id }}</div>
+                <div class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                  {{ item.platform }} / {{ item.type }} · {{ item.error_code || item.message || 'ok' }}
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span :class="categoryPillClass(item.category)">{{ categoryLabel(item.category, item.http_status) }}</span>
+                <span v-if="item.action !== 'none'" class="action-pill">{{ actionLabel(item.action) }}</span>
+              </div>
+              <div class="text-right text-xs text-gray-500 dark:text-gray-400">{{ formatTime(item.checked_at) }}</div>
+            </div>
           </div>
         </div>
 
-        <div class="max-h-[48vh] overflow-auto">
-          <table class="min-w-full divide-y divide-gray-100 text-sm dark:divide-dark-600">
-            <thead class="sticky top-0 bg-gray-50 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-dark-700 dark:text-gray-300">
-              <tr>
-                <th class="w-10 px-4 py-3"></th>
-                <th class="px-4 py-3">账号</th>
-                <th class="px-4 py-3">平台/类型</th>
-                <th class="px-4 py-3">状态</th>
-                <th class="px-4 py-3">分类</th>
-                <th class="px-4 py-3">HTTP</th>
-                <th class="px-4 py-3">耗时</th>
-                <th class="px-4 py-3">信息</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100 dark:divide-dark-600">
-              <tr v-if="filteredResults.length === 0">
-                <td colspan="8" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                  暂无结果。开始检测后这里会实时刷新。
-                </td>
-              </tr>
-              <tr v-for="item in filteredResults" :key="item.account_id" class="hover:bg-gray-50 dark:hover:bg-dark-700/60">
-                <td class="px-4 py-3">
-                  <input
-                    type="checkbox"
-                    class="rounded border-gray-300 text-primary-600"
-                    :checked="checkedResultIds.includes(item.account_id)"
-                    @change="toggleResult(item.account_id)"
-                  />
-                </td>
-                <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{{ item.name || item.account_id }}</td>
-                <td class="px-4 py-3 text-gray-600 dark:text-gray-300">{{ item.platform }} / {{ item.type }}</td>
-                <td class="px-4 py-3">
-                  <span :class="statusBadgeClass(item.status)">{{ statusLabel(item.status) }}</span>
-                </td>
-                <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ categoryLabel(item.category) }}</td>
-                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ item.http_status || '-' }}</td>
-                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ typeof item.latency_ms === 'number' ? `${item.latency_ms}ms` : '-' }}</td>
-                <td class="max-w-md px-4 py-3 text-gray-500 dark:text-gray-400">
-                  <span class="line-clamp-2" :title="item.message || item.error_code || ''">
-                    {{ item.error_code || item.message || '-' }}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="panel">
+          <div class="panel-title">实时日志</div>
+          <div class="log-console">
+            <div v-if="logs.length === 0" class="text-gray-400">等待巡检日志...</div>
+            <div v-for="item in logs" :key="item.id" :class="logLineClass(item.level)">
+              [{{ formatClock(item.created_at) }}] {{ item.message }}
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <template #footer>
@@ -239,15 +194,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, reactive, ref, watch, onUnmounted } from 'vue'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type {
   AccountHealthCheckFilters,
-  AccountHealthCheckJob,
-  AccountHealthCheckResult
+  AccountInspectionResult,
+  AccountInspectionSummary,
+  AccountInspectionSettings,
+  AccountInspectionStatus
 } from '@/api/admin/accounts'
 
 const props = defineProps<{
@@ -262,110 +219,223 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
-const scope = ref<'selected' | 'filtered'>('filtered')
-const concurrency = ref(2)
-const batchLimit = ref(200)
-const modelId = ref('')
-const includeUnschedulable = ref(false)
-const job = ref<AccountHealthCheckJob | null>(null)
-const results = ref<AccountHealthCheckResult[]>([])
-const resultStatus = ref('')
-const resultCategory = ref('')
-const checkedResultIds = ref<number[]>([])
+const loading = ref(false)
+const saving = ref(false)
 const starting = ref(false)
-const canceling = ref(false)
-const actionLoading = ref(false)
-const nextCursor = ref<number | null>(null)
+const stopping = ref(false)
+const status = ref<AccountInspectionStatus | null>(null)
 let pollTimer: number | undefined
 
-const emptySummary = {
+const form = reactive<AccountInspectionSettings>({
+  enabled: false,
+  filters: {},
+  model_id: '',
+  batch_limit: 100,
+  concurrency: 1,
+  batch_sleep_seconds: 15,
+  recheck_after_hours: 168,
+  include_unschedulable: true,
+  delete_auth_invalid: true,
+  disable_quota_exhausted: true,
+  restore_auto_disabled: true,
+  cursor: 0
+})
+
+const emptySummary: AccountInspectionSummary = {
   total: 0,
-  pending: 0,
-  checking: 0,
+  checked: 0,
   available: 0,
   rate_limited: 0,
   unavailable: 0,
+  quota_exhausted: 0,
+  auth_401: 0,
+  payment_402: 0,
+  other_failure: 0,
+  unknown: 0,
+  deleted: 0,
+  disabled: 0,
+  restored: 0,
+  action_failed: 0,
   by_category: {}
 }
 
-const summary = computed(() => job.value?.summary ?? emptySummary)
-const isRunning = computed(() => ['queued', 'running'].includes(job.value?.status || ''))
-const canContinue = computed(() => {
-  return !isRunning.value && Boolean(job.value?.has_more)
-})
-const completedCount = computed(() => summary.value.available + summary.value.rate_limited + summary.value.unavailable)
+const selectedCount = computed(() => props.selectedIds.length)
+const summary = computed(() => status.value?.summary ?? emptySummary)
+const candidateTotal = computed(() => status.value?.candidate_total ?? 0)
+const displayTotal = computed(() => summary.value.total || candidateTotal.value)
+const running = computed(() => Boolean(status.value?.running))
+const recentResults = computed<AccountInspectionResult[]>(() => status.value?.recent_results ?? [])
+const logs = computed(() => status.value?.logs ?? [])
 const progressPercent = computed(() => {
-  if (!summary.value.total) return 0
-  return Math.min(100, Math.round((completedCount.value / summary.value.total) * 100))
+  const total = displayTotal.value
+  if (!total) return 0
+  return Math.min(100, Math.round((summary.value.checked / total) * 100))
 })
-const jobStatusLabel = computed(() => {
-  if (canceling.value) return '取消中'
-  switch (job.value?.status) {
-    case 'queued': return '排队中'
-    case 'running': return '检测中'
-    case 'completed': return '已完成'
-    case 'canceled': return '已取消'
-    case 'failed': return '失败'
-    default: return '未开始'
-  }
+const runStateLabel = computed(() => {
+  const run = status.value?.run
+  if (!run) return '尚未开始'
+  if (run.status === 'running') return '巡检中'
+  if (run.status === 'stopping') return '停止中'
+  if (run.status === 'completed') return run.has_more ? '本批完成，可继续' : '已完成'
+  if (run.status === 'stopped') return '已取消'
+  if (run.status === 'failed') return '失败'
+  return run.status
 })
-const categoryRows = computed(() => Object.entries(summary.value.by_category || {})
-  .map(([category, count]) => ({ category, count: Number(count) || 0 }))
-  .filter(row => row.count > 0)
-  .sort((a, b) => b.count - a.count)
-)
-const filteredResults = computed(() => {
-  return results.value.filter(item => {
-    if (resultStatus.value && item.status !== resultStatus.value) return false
-    if (resultCategory.value && item.category !== resultCategory.value) return false
-    return true
-  })
+const runTimeLabel = computed(() => {
+  const run = status.value?.run
+  if (!run?.started_at) return '尚未开始'
+  const start = new Date(run.started_at).getTime()
+  const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now()
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return '计算中'
+  const seconds = Math.max(0, Math.round((end - start) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 })
-const allFilteredChecked = computed(() => {
-  return filteredResults.value.length > 0 && filteredResults.value.every(item => checkedResultIds.value.includes(item.account_id))
+const metricCards = computed(() => {
+  const total = displayTotal.value || 1
+  const pct = (value: number) => Math.round((value / total) * 100)
+  return [
+    { key: 'available', label: '正常', value: summary.value.available, percent: pct(summary.value.available), valueClass: 'text-emerald-600 dark:text-emerald-300' },
+    { key: 'quota', label: '达到限额', value: summary.value.quota_exhausted, percent: pct(summary.value.quota_exhausted), valueClass: 'text-amber-600 dark:text-amber-300' },
+    { key: '401', label: '401', value: summary.value.auth_401, percent: pct(summary.value.auth_401), valueClass: 'text-rose-600 dark:text-rose-300' },
+    { key: '402', label: '402', value: summary.value.payment_402, percent: pct(summary.value.payment_402), valueClass: 'text-orange-600 dark:text-orange-300' },
+    { key: 'other', label: '其它失败', value: summary.value.other_failure, percent: pct(summary.value.other_failure), valueClass: 'text-red-600 dark:text-red-300' },
+    { key: 'unknown', label: '未知', value: summary.value.unknown, percent: pct(summary.value.unknown), valueClass: 'text-gray-600 dark:text-gray-300' }
+  ]
 })
-const startButtonLabel = computed(() => {
-  if (canContinue.value) return '继续下一批'
-  return '开始检测本批'
+const filterSummary = computed(() => {
+  const f = form.filters || {}
+  const parts = [
+    f.platform ? `平台=${f.platform}` : '',
+    f.type ? `类型=${f.type}` : '',
+    f.status ? `状态=${f.status}` : '',
+    f.group ? `分组=${f.group}` : '',
+    f.search ? `搜索=${f.search}` : '',
+    f.privacy_mode ? `隐私=${f.privacy_mode}` : ''
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join('，') : '全部账号'
 })
 
 watch(
   () => props.show,
   (visible) => {
     if (visible) {
-      scope.value = props.selectedIds.length > 0 ? 'selected' : 'filtered'
-      resetBatchCursor()
+      void loadStatus(true).then(() => {
+        if (running.value) {
+          startPolling()
+        }
+      })
     } else {
       stopPolling()
     }
   }
 )
 
-watch(scope, () => {
-  resetBatchCursor()
-})
-
 watch(
   () => props.filters,
   () => {
-    if (scope.value === 'filtered') {
-      resetBatchCursor()
-    }
+    if (!props.show || running.value) return
+    applyCurrentFilters()
   },
   { deep: true }
 )
 
-onUnmounted(() => {
-  stopPolling()
-})
+onUnmounted(() => stopPolling())
+
+const loadStatus = async (syncFilters = false) => {
+  loading.value = true
+  try {
+    const next = await adminAPI.accounts.getInspectionStatus()
+    status.value = next
+    Object.assign(form, next.settings)
+    if (syncFilters && !next.running) {
+      applyCurrentFilters()
+      const saved = await adminAPI.accounts.updateInspectionSettings(normalizedSettings())
+      Object.assign(form, saved)
+      const refreshed = await adminAPI.accounts.getInspectionStatus()
+      status.value = refreshed
+      Object.assign(form, refreshed.settings)
+    }
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, '加载巡检状态失败'))
+  } finally {
+    loading.value = false
+  }
+}
+
+const applyCurrentFilters = () => {
+  const nextFilters = sanitizeFilters(props.filters)
+  const sameFilters = filtersEqual(form.filters, nextFilters)
+  form.filters = nextFilters
+  form.cursor = sameFilters ? (status.value?.settings?.cursor ?? 0) : 0
+}
+
+const saveSettings = async () => {
+  saving.value = true
+  try {
+    const saved = await adminAPI.accounts.updateInspectionSettings(normalizedSettings())
+    Object.assign(form, saved)
+    appStore.showSuccess('巡检配置已保存')
+    await loadStatus(false)
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, '保存巡检配置失败'))
+  } finally {
+    saving.value = false
+  }
+}
+
+const start = async () => {
+  starting.value = true
+  try {
+    await adminAPI.accounts.updateInspectionSettings(normalizedSettings())
+    await adminAPI.accounts.startInspection()
+    appStore.showSuccess('巡检已启动')
+    await loadStatus(false)
+    startPolling()
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, '启动巡检失败'))
+  } finally {
+    starting.value = false
+  }
+}
+
+const stop = async () => {
+  stopping.value = true
+  try {
+    await adminAPI.accounts.stopInspection()
+    appStore.showSuccess('已发送取消巡检指令')
+    await loadStatus(false)
+    if (running.value) {
+      startPolling()
+    } else {
+      stopPolling()
+      emit('changed')
+    }
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, '取消巡检失败'))
+  } finally {
+    stopping.value = false
+  }
+}
 
 const startPolling = () => {
   stopPolling()
-  pollTimer = window.setInterval(() => {
-    refreshJob().catch((error) => {
-      console.error('Failed to poll account health check job:', error)
-    })
-  }, 1500)
+  pollTimer = window.setInterval(async () => {
+    try {
+      const next = await adminAPI.accounts.getInspectionStatus()
+      const wasRunning = running.value
+      status.value = next
+      if (next.running || wasRunning) {
+        Object.assign(form, next.settings)
+      }
+      if (wasRunning && !next.running) {
+        stopPolling()
+        emit('changed')
+      }
+    } catch (error) {
+      console.error('Failed to poll account inspection status:', error)
+    }
+  }, 2000)
 }
 
 const stopPolling = () => {
@@ -375,136 +445,40 @@ const stopPolling = () => {
   }
 }
 
-const refreshJob = async () => {
-  if (!job.value) return
-  job.value = await adminAPI.accounts.getHealthCheckJob(job.value.id)
-  if (typeof job.value.next_cursor === 'number') {
-    nextCursor.value = job.value.next_cursor
-  }
-  await refreshResults()
-  if (!isRunning.value) {
-    stopPolling()
-  }
-}
+const normalizedSettings = (): AccountInspectionSettings => ({
+  ...form,
+  filters: sanitizeFilters(props.filters),
+  model_id: String(form.model_id || '').trim(),
+  batch_limit: clampNumber(form.batch_limit, 1, 500, 100),
+  concurrency: clampNumber(form.concurrency, 1, 5, 1),
+  batch_sleep_seconds: clampNumber(form.batch_sleep_seconds, 1, 3600, 15),
+  recheck_after_hours: clampNumber(form.recheck_after_hours, 1, 2160, 168),
+  include_unschedulable: Boolean(form.include_unschedulable),
+  delete_auth_invalid: Boolean(form.delete_auth_invalid),
+  disable_quota_exhausted: Boolean(form.disable_quota_exhausted),
+  restore_auto_disabled: Boolean(form.restore_auto_disabled),
+  cursor: Number(form.cursor || 0)
+})
 
-const refreshResults = async () => {
-  if (!job.value) return
-  const response = await adminAPI.accounts.listHealthCheckJobResults(job.value.id)
-  results.value = response.items ?? []
-}
+const sanitizeFilters = (filters: AccountHealthCheckFilters): AccountInspectionSettings['filters'] => ({
+  platform: filters.platform || '',
+  type: filters.type || '',
+  status: filters.status || '',
+  group: filters.group || '',
+  search: filters.search || '',
+  privacy_mode: filters.privacy_mode || ''
+})
 
-const startJob = async () => {
-  if (scope.value === 'selected' && props.selectedIds.length === 0) {
-    appStore.showError('请先选择账号，或改用当前筛选范围')
-    return
-  }
-  starting.value = true
-  canceling.value = false
-  checkedResultIds.value = []
-  results.value = []
-  const cursor = canContinue.value ? (nextCursor.value ?? job.value?.next_cursor ?? 0) : 0
-  try {
-    job.value = await adminAPI.accounts.createHealthCheckJob({
-      account_ids: scope.value === 'selected' ? props.selectedIds : undefined,
-      filters: scope.value === 'filtered' ? props.filters : undefined,
-      model_id: modelId.value || undefined,
-      concurrency: clampNumber(concurrency.value, 1, 5, 2),
-      limit: clampNumber(batchLimit.value, 1, 500, 200),
-      cursor,
-      include_unschedulable: includeUnschedulable.value
-    })
-    nextCursor.value = job.value.next_cursor ?? null
-    await refreshResults()
-    startPolling()
-  } catch (error) {
-    console.error('Failed to create account health check job:', error)
-    appStore.showError(extractApiErrorMessage(error, '创建检测任务失败'))
-  } finally {
-    starting.value = false
-  }
-}
-
-const cancelJob = async () => {
-  if (!job.value) return
-  canceling.value = true
-  stopPolling()
-  try {
-    job.value = await adminAPI.accounts.cancelHealthCheckJob(job.value.id)
-    if (typeof job.value.next_cursor === 'number') {
-      nextCursor.value = job.value.next_cursor
-    }
-    canceling.value = false
-  } catch (error) {
-    console.error('Failed to cancel account health check job:', error)
-    canceling.value = false
-    if (isRunning.value) {
-      startPolling()
-    }
-    appStore.showError(extractApiErrorMessage(error, '取消检测失败'))
-  }
-}
-
-const handleClose = () => {
-  stopPolling()
-  emit('close')
-}
-
-const toggleResult = (accountId: number) => {
-  if (checkedResultIds.value.includes(accountId)) {
-    checkedResultIds.value = checkedResultIds.value.filter(id => id !== accountId)
-  } else {
-    checkedResultIds.value = [...checkedResultIds.value, accountId]
-  }
-}
-
-const toggleAllFilteredResults = () => {
-  const ids = filteredResults.value.map(item => item.account_id)
-  if (allFilteredChecked.value) {
-    const remove = new Set(ids)
-    checkedResultIds.value = checkedResultIds.value.filter(id => !remove.has(id))
-  } else {
-    checkedResultIds.value = Array.from(new Set([...checkedResultIds.value, ...ids]))
-  }
-}
-
-const runAction = async (
-  runner: (ids: number[]) => Promise<{ success: number; failed: number; success_ids?: number[] }>,
-  successText: string,
-  options?: { removeSucceeded?: boolean }
+const filtersEqual = (
+  left: AccountInspectionSettings['filters'],
+  right: AccountInspectionSettings['filters']
 ) => {
-  const ids = [...checkedResultIds.value]
-  if (ids.length === 0) return
-  actionLoading.value = true
-  try {
-    const result = await runner(ids)
-    const successIds = result.success_ids?.length ? result.success_ids : (result.failed === 0 ? ids : [])
-    if (result.failed > 0) {
-      appStore.showError(`操作部分成功：成功 ${result.success}，失败 ${result.failed}`)
-    } else {
-      appStore.showSuccess(successText.replace('{count}', String(result.success)))
-    }
-    if (options?.removeSucceeded && successIds.length > 0) {
-      const remove = new Set(successIds)
-      results.value = results.value.filter(item => !remove.has(item.account_id))
-    }
-    checkedResultIds.value = checkedResultIds.value.filter(id => !successIds.includes(id))
-    emit('changed')
-  } catch (error) {
-    console.error('Failed to run account health check action:', error)
-    appStore.showError(extractApiErrorMessage(error, '操作失败'))
-  } finally {
-    actionLoading.value = false
-  }
-}
-
-const resetBatchCursor = () => {
-  nextCursor.value = null
-  job.value = null
-  results.value = []
-  checkedResultIds.value = []
-  resultStatus.value = ''
-  resultCategory.value = ''
-  canceling.value = false
+  return (left.platform || '') === (right.platform || '') &&
+    (left.type || '') === (right.type || '') &&
+    (left.status || '') === (right.status || '') &&
+    (left.group || '') === (right.group || '') &&
+    (left.search || '') === (right.search || '') &&
+    (left.privacy_mode || '') === (right.privacy_mode || '')
 }
 
 const clampNumber = (value: number, min: number, max: number, fallback: number) => {
@@ -512,82 +486,153 @@ const clampNumber = (value: number, min: number, max: number, fallback: number) 
   return Math.min(max, Math.max(min, Math.floor(value)))
 }
 
-const disableSelected = async () => {
-  await runAction(
-    ids => adminAPI.accounts.bulkUpdate(ids, { schedulable: false }),
-    '已禁用 {count} 个账号调度'
-  )
+const handleClose = () => {
+  stopPolling()
+  emit('close')
 }
 
-const clearErrorSelected = async () => {
-  await runAction(
-    ids => adminAPI.accounts.batchClearError(ids),
-    '已清除 {count} 个账号错误'
-  )
-}
-
-const refreshSelected = async () => {
-  await runAction(
-    ids => adminAPI.accounts.batchRefresh(ids),
-    '已刷新 {count} 个账号 token'
-  )
-}
-
-const deleteSelected = async () => {
-  const ids = [...checkedResultIds.value]
-  if (!window.confirm(`确认删除 ${ids.length} 个账号？此操作不可恢复。`)) return
-  await runAction(
-    ids => adminAPI.accounts.batchDelete(ids),
-    '已删除 {count} 个账号',
-    { removeSucceeded: true }
-  )
-}
-
-const statusLabel = (status: string) => {
-  switch (status) {
-    case 'available': return '可用'
-    case 'rate_limited': return '限流'
-    case 'unavailable': return '不可用'
-    case 'checking': return '检测中'
-    case 'pending': return '待检测'
-    default: return status || '-'
-  }
-}
-
-const categoryLabel = (category: string) => {
+const categoryLabel = (category: string, httpStatus?: number) => {
+  if (category === 'auth_invalid' && httpStatus === 401) return '401'
   switch (category) {
-    case 'available': return '可用'
+    case 'available': return '正常'
     case 'rate_limited': return '限流'
     case 'quota_exhausted': return '额度不足'
     case 'auth_invalid': return '认证失效'
+    case 'payment_required': return '402'
     case 'proxy_error': return '代理/网络'
     case 'model_error': return '模型错误'
     case 'upstream_error': return '上游错误'
     case 'config_error': return '配置缺失'
-    case 'unknown_error': return '未知错误'
+    case 'unknown_error': return '未知'
     default: return category || '-'
   }
 }
 
-const statusBadgeClass = (status: string) => {
-  const base = 'inline-flex rounded-full px-2 py-0.5 text-xs font-medium'
-  switch (status) {
-    case 'available':
-      return `${base} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300`
-    case 'rate_limited':
-      return `${base} bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300`
-    case 'unavailable':
-      return `${base} bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300`
-    case 'checking':
-      return `${base} bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300`
-    default:
-      return `${base} bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300`
+const actionLabel = (action: string) => {
+  switch (action) {
+    case 'delete': return '已删除'
+    case 'disable': return '已关闭'
+    case 'restore': return '已恢复'
+    default: return action
   }
+}
+
+const categoryPillClass = (category: string) => {
+  const base = 'rounded-full px-2.5 py-1 text-xs font-semibold'
+  if (category === 'available') return `${base} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200`
+  if (category === 'quota_exhausted' || category === 'rate_limited') return `${base} bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200`
+  if (category === 'auth_invalid') return `${base} bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200`
+  if (category === 'payment_required') return `${base} bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-200`
+  return `${base} bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-200`
+}
+
+const logLineClass = (level: string) => {
+  if (level === 'error') return 'text-rose-300'
+  if (level === 'warn') return 'text-amber-300'
+  return 'text-emerald-100'
+}
+
+const formatTime = (value?: string) => {
+  if (!value) return '-'
+  return new Date(value).toLocaleString()
+}
+
+const formatClock = (value?: string) => {
+  if (!value) return '--:--:--'
+  return new Date(value).toLocaleTimeString('zh-CN', { hour12: false })
 }
 </script>
 
 <style scoped>
-.health-card {
-  @apply rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-600 dark:bg-dark-800;
+.inspection-shell {
+  @apply space-y-5;
+}
+
+.inspection-hero {
+  @apply flex flex-col gap-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-600 dark:bg-dark-800 lg:flex-row lg:items-center;
+}
+
+.metric-card {
+  @apply rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-600 dark:bg-dark-800;
+}
+
+.panel {
+  @apply rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-600 dark:bg-dark-800;
+}
+
+.panel-header {
+  @apply mb-4 flex flex-wrap items-start justify-between gap-3;
+}
+
+.panel-title {
+  @apply text-base font-semibold text-gray-950 dark:text-white;
+}
+
+.panel-subtitle {
+  @apply mt-1 text-sm text-gray-500 dark:text-gray-400;
+}
+
+.field {
+  @apply block;
+}
+
+.field span {
+  @apply text-sm font-medium text-gray-700 dark:text-gray-200;
+}
+
+.field input {
+  @apply mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-dark-600 dark:bg-dark-700 dark:text-white;
+}
+
+.field small {
+  @apply mt-1 block text-xs text-gray-500 dark:text-gray-400;
+}
+
+.toggle-row {
+  @apply flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-dark-600;
+}
+
+.toggle-row input {
+  @apply mt-1 rounded border-gray-300 text-primary-600;
+}
+
+.toggle-row strong {
+  @apply block text-sm text-gray-900 dark:text-white;
+}
+
+.toggle-row small {
+  @apply mt-1 block text-xs text-gray-500 dark:text-gray-400;
+}
+
+.action-stat {
+  @apply rounded-xl bg-gray-50 p-3 text-center dark:bg-dark-700/60;
+}
+
+.action-stat span {
+  @apply block text-xs text-gray-500 dark:text-gray-400;
+}
+
+.action-stat strong {
+  @apply mt-1 block text-xl font-semibold text-gray-950 dark:text-white;
+}
+
+.result-list {
+  @apply max-h-[44vh] overflow-auto rounded-xl border border-gray-100 dark:border-dark-600;
+}
+
+.result-row {
+  @apply grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-dark-600;
+}
+
+.empty-state {
+  @apply px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400;
+}
+
+.action-pill {
+  @apply rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:bg-sky-900/30 dark:text-sky-200;
+}
+
+.log-console {
+  @apply mt-4 max-h-[44vh] overflow-auto rounded-xl bg-slate-950 p-4 font-mono text-xs leading-6 shadow-inner;
 }
 </style>

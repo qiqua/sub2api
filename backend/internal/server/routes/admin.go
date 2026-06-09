@@ -278,6 +278,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("", h.Admin.Account.List)
+		accounts.GET("/inspection/status", h.Admin.AccountInspection.GetStatus)
+		accounts.PUT("/inspection/settings", h.Admin.AccountInspection.UpdateSettings)
+		accounts.POST("/inspection/start", h.Admin.AccountInspection.Start)
+		accounts.POST("/inspection/stop", h.Admin.AccountInspection.Stop)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
 		accounts.POST("", h.Admin.Account.Create)
 		accounts.POST("/check-mixed-channel", h.Admin.Account.CheckMixedChannel)

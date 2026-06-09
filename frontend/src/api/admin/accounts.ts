@@ -483,6 +483,101 @@ export interface AccountHealthCheckResult {
   checked_at?: string
 }
 
+export interface AccountInspectionFilters {
+  platform?: string
+  type?: string
+  status?: string
+  group?: string
+  search?: string
+  privacy_mode?: string
+}
+
+export interface AccountInspectionSettings {
+  enabled?: boolean
+  filters: AccountInspectionFilters
+  model_id?: string
+  batch_limit: number
+  concurrency: number
+  batch_sleep_seconds: number
+  recheck_after_hours: number
+  include_unschedulable: boolean
+  delete_auth_invalid: boolean
+  disable_quota_exhausted: boolean
+  restore_auto_disabled: boolean
+  cursor?: number
+  updated_at?: string
+}
+
+export interface AccountInspectionRun {
+  id: number
+  status: 'queued' | 'running' | 'stopping' | 'stopped' | 'completed' | 'failed'
+  settings_snapshot: AccountInspectionSettings
+  total_accounts: number
+  cursor: number
+  next_cursor: number
+  has_more: boolean
+  error?: string
+  started_at?: string
+  finished_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AccountInspectionSummary {
+  total: number
+  checked: number
+  available: number
+  rate_limited: number
+  unavailable: number
+  quota_exhausted: number
+  auth_401: number
+  payment_402: number
+  other_failure: number
+  unknown: number
+  deleted: number
+  disabled: number
+  restored: number
+  action_failed: number
+  by_category: Record<string, number>
+}
+
+export interface AccountInspectionResult {
+  id: number
+  run_id: number
+  account_id: number
+  name: string
+  platform: string
+  type: string
+  status: 'available' | 'rate_limited' | 'unavailable'
+  category: string
+  http_status?: number
+  error_code?: string
+  message?: string
+  latency_ms?: number
+  action: 'none' | 'delete' | 'disable' | 'restore'
+  action_error?: string
+  checked_at: string
+  created_at?: string
+}
+
+export interface AccountInspectionLog {
+  id: number
+  run_id?: number
+  level: 'info' | 'warn' | 'error'
+  message: string
+  created_at: string
+}
+
+export interface AccountInspectionStatus {
+  settings: AccountInspectionSettings
+  run?: AccountInspectionRun
+  summary: AccountInspectionSummary
+  candidate_total: number
+  running: boolean
+  recent_results: AccountInspectionResult[]
+  logs: AccountInspectionLog[]
+}
+
 export async function createHealthCheckJob(payload: AccountHealthCheckJobRequest): Promise<AccountHealthCheckJob> {
   const { data } = await apiClient.post<AccountHealthCheckJob>('/admin/accounts/health-check-jobs', payload, {
     timeout: 120000
@@ -508,6 +603,26 @@ export async function listHealthCheckJobResults(
 
 export async function cancelHealthCheckJob(jobId: string): Promise<AccountHealthCheckJob> {
   const { data } = await apiClient.post<AccountHealthCheckJob>(`/admin/accounts/health-check-jobs/${jobId}/cancel`)
+  return data
+}
+
+export async function getInspectionStatus(): Promise<AccountInspectionStatus> {
+  const { data } = await apiClient.get<AccountInspectionStatus>('/admin/accounts/inspection/status')
+  return data
+}
+
+export async function updateInspectionSettings(settings: AccountInspectionSettings): Promise<AccountInspectionSettings> {
+  const { data } = await apiClient.put<AccountInspectionSettings>('/admin/accounts/inspection/settings', settings)
+  return data
+}
+
+export async function startInspection(): Promise<AccountInspectionRun> {
+  const { data } = await apiClient.post<AccountInspectionRun>('/admin/accounts/inspection/start')
+  return data
+}
+
+export async function stopInspection(): Promise<AccountInspectionRun | null> {
+  const { data } = await apiClient.post<AccountInspectionRun | null>('/admin/accounts/inspection/stop')
   return data
 }
 
@@ -849,6 +964,10 @@ export const accountsAPI = {
   getHealthCheckJob,
   listHealthCheckJobResults,
   cancelHealthCheckJob,
+  getInspectionStatus,
+  updateInspectionSettings,
+  startInspection,
+  stopInspection,
   batchDelete,
   previewFromCrs,
   syncFromCrs,
