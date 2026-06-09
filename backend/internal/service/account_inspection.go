@@ -15,13 +15,16 @@ const (
 	AccountInspectionRunRunning   = "running"
 	AccountInspectionRunStopping  = "stopping"
 	AccountInspectionRunStopped   = "stopped"
+	AccountInspectionRunPaused    = "paused"
 	AccountInspectionRunCompleted = "completed"
 	AccountInspectionRunFailed    = "failed"
 
-	AccountInspectionActionNone    = "none"
-	AccountInspectionActionDelete  = "delete"
-	AccountInspectionActionDisable = "disable"
-	AccountInspectionActionRestore = "restore"
+	AccountInspectionActionNone          = "none"
+	AccountInspectionActionDelete        = "delete"
+	AccountInspectionActionRetain        = "retain"
+	AccountInspectionActionPendingDelete = "delete_pending"
+	AccountInspectionActionDisable       = "disable"
+	AccountInspectionActionRestore       = "restore"
 
 	AccountInspectionLogInfo  = "info"
 	AccountInspectionLogWarn  = "warn"
@@ -29,16 +32,23 @@ const (
 )
 
 const (
-	defaultAccountInspectionBatchLimit        = 100
-	defaultAccountInspectionConcurrency       = 1
-	defaultAccountInspectionBatchSleepSeconds = 15
-	defaultAccountInspectionRecheckAfterHours = 168
-	defaultAccountInspectionLogRetention      = 1000
-	defaultAccountInspectionResultRetention   = 5000
-	maxAccountInspectionBatchLimit            = 500
-	maxAccountInspectionConcurrency           = 5
-	maxAccountInspectionBatchSleepSeconds     = 3600
-	maxAccountInspectionRecheckAfterHours     = 24 * 90
+	defaultAccountInspectionBatchLimit          = 50
+	defaultAccountInspectionConcurrency         = 1
+	defaultAccountInspectionBatchSleepSeconds   = 30
+	defaultAccountInspectionRecheckAfterHours   = 168
+	defaultAccountInspectionMaxAccountsPerRun   = 1000
+	defaultAccountInspectionAutoPauseErrors     = 3
+	defaultAccountInspectionDeleteMinConsecutive = 1
+	defaultAccountInspectionDeleteQuotaHours     = 168
+	defaultAccountInspectionDeletePaymentHours   = 168
+	defaultAccountInspectionLogRetention        = 1000
+	defaultAccountInspectionResultRetention     = 5000
+	maxAccountInspectionBatchLimit              = 500
+	maxAccountInspectionConcurrency             = 5
+	maxAccountInspectionBatchSleepSeconds       = 3600
+	maxAccountInspectionRecheckAfterHours       = 24 * 90
+	maxAccountInspectionMaxAccountsPerRun       = 100000
+	maxAccountInspectionAutoPauseErrors         = 100
 )
 
 type AccountInspectionTester interface {
@@ -55,28 +65,42 @@ type AccountInspectionFilters struct {
 }
 
 type AccountInspectionSettings struct {
-	Enabled               bool                     `json:"enabled"`
-	Filters               AccountInspectionFilters `json:"filters"`
-	ModelID               string                   `json:"model_id"`
-	BatchLimit            int                      `json:"batch_limit"`
-	Concurrency           int                      `json:"concurrency"`
-	BatchSleepSeconds     int                      `json:"batch_sleep_seconds"`
-	RecheckAfterHours     int                      `json:"recheck_after_hours"`
-	IncludeUnschedulable  bool                     `json:"include_unschedulable"`
-	DeleteAuthInvalid     bool                     `json:"delete_auth_invalid"`
-	DisableQuotaExhausted bool                     `json:"disable_quota_exhausted"`
-	RestoreAutoDisabled   bool                     `json:"restore_auto_disabled"`
-	Cursor                int64                    `json:"cursor"`
-	UpdatedAt             time.Time                `json:"updated_at"`
+	Enabled                             bool                     `json:"enabled"`
+	Filters                             AccountInspectionFilters `json:"filters"`
+	ModelID                             string                   `json:"model_id"`
+	BatchLimit                          int                      `json:"batch_limit"`
+	Concurrency                         int                      `json:"concurrency"`
+	BatchSleepSeconds                   int                      `json:"batch_sleep_seconds"`
+	RecheckAfterHours                   int                      `json:"recheck_after_hours"`
+	LowResourceMode                     bool                     `json:"low_resource_mode"`
+	MaxAccountsPerRun                   int                      `json:"max_accounts_per_run"`
+	AutoPauseConsecutiveErrors          int                      `json:"auto_pause_consecutive_errors"`
+	IncludeUnschedulable                bool                     `json:"include_unschedulable"`
+	DeleteAuthInvalid                   bool                     `json:"delete_auth_invalid"`
+	DeleteAuthInvalidMinConsecutive     int                      `json:"delete_auth_invalid_min_consecutive"`
+	DeleteAuthInvalidAfterHours         int                      `json:"delete_auth_invalid_after_hours"`
+	DeleteQuotaExhausted                bool                     `json:"delete_quota_exhausted"`
+	DeleteQuotaExhaustedMinConsecutive  int                      `json:"delete_quota_exhausted_min_consecutive"`
+	DeleteQuotaExhaustedAfterHours      int                      `json:"delete_quota_exhausted_after_hours"`
+	DeletePaymentRequired               bool                     `json:"delete_payment_required"`
+	DeletePaymentRequiredMinConsecutive int                      `json:"delete_payment_required_min_consecutive"`
+	DeletePaymentRequiredAfterHours     int                      `json:"delete_payment_required_after_hours"`
+	DisableQuotaExhausted               bool                     `json:"disable_quota_exhausted"`
+	RestoreAutoDisabled                 bool                     `json:"restore_auto_disabled"`
+	Cursor                              int64                    `json:"cursor"`
+	UpdatedAt                           time.Time                `json:"updated_at"`
 }
 
 type AccountInspectionCandidate struct {
-	AccountID    int64
-	Name         string
-	Platform     string
-	Type         string
-	Schedulable  bool
-	AutoDisabled bool
+	AccountID                  int64
+	Name                       string
+	Platform                   string
+	Type                       string
+	Schedulable                bool
+	AutoDisabled              bool
+	DeleteCandidateCategory    string
+	DeleteCandidateFirstSeenAt *time.Time
+	DeleteCandidateCount       int
 }
 
 type AccountInspectionCandidateBatch struct {
@@ -141,6 +165,8 @@ type AccountInspectionSummary struct {
 	OtherFailure   int64          `json:"other_failure"`
 	Unknown        int64          `json:"unknown"`
 	Deleted        int64          `json:"deleted"`
+	Retained       int64          `json:"retained"`
+	PendingDelete  int64          `json:"pending_delete"`
 	Disabled       int64          `json:"disabled"`
 	Restored       int64          `json:"restored"`
 	ActionFailed   int64          `json:"action_failed"`
@@ -158,9 +184,18 @@ type AccountInspectionStatus struct {
 }
 
 type AccountInspectionStatePatch struct {
-	AutoDisabled *bool
-	Reason       string
-	At           time.Time
+	AutoDisabled              *bool
+	Reason                    string
+	At                        time.Time
+	UpdateDeleteCandidate     bool
+	DeleteCandidateCategory   string
+	DeleteCandidateFirstSeenAt *time.Time
+	DeleteCandidateCount      int
+}
+
+type AccountInspectionBatchStats struct {
+	Processed   int
+	InfraErrors int
 }
 
 type AccountInspectionRepository interface {
@@ -396,18 +431,41 @@ func (s *AccountInspectionService) run(ctx context.Context, run *AccountInspecti
 	if err := s.repo.UpdateRun(ctx, run); err != nil {
 		slog.Warn("account_inspection.mark_run_running_failed", "run_id", run.ID, "error", err)
 	}
-	s.log(ctx, run.ID, AccountInspectionLogInfo, fmt.Sprintf("inspection started: batch=%d concurrency=%d sleep=%ds cursor=%d", run.SettingsSnapshot.BatchLimit, run.SettingsSnapshot.Concurrency, run.SettingsSnapshot.BatchSleepSeconds, run.SettingsSnapshot.Cursor))
+	s.log(ctx, run.ID, AccountInspectionLogInfo, fmt.Sprintf("inspection started: batch=%d concurrency=%d sleep=%ds cursor=%d max=%d", run.SettingsSnapshot.BatchLimit, run.SettingsSnapshot.Concurrency, run.SettingsSnapshot.BatchSleepSeconds, run.SettingsSnapshot.Cursor, run.SettingsSnapshot.MaxAccountsPerRun))
 
 	settings := run.SettingsSnapshot
+	processedThisRun := 0
+	consecutiveInfraErrors := 0
 	for {
 		if ctx.Err() != nil {
 			s.finishRun(context.Background(), run, AccountInspectionRunStopped, "")
 			return
 		}
 
-		batch, err := s.repo.ListCandidates(ctx, settings)
+		if settings.MaxAccountsPerRun > 0 && processedThisRun >= settings.MaxAccountsPerRun {
+			settings.Enabled = false
+			_, _ = s.repo.SaveSettings(context.Background(), settings)
+			s.log(context.Background(), run.ID, AccountInspectionLogWarn, fmt.Sprintf("inspection paused: reached per-run limit %d; click start again to continue from cursor=%d", settings.MaxAccountsPerRun, settings.Cursor))
+			s.finishRun(context.Background(), run, AccountInspectionRunPaused, "per-run account limit reached")
+			return
+		}
+
+		batchSettings := settings
+		if settings.MaxAccountsPerRun > 0 {
+			remaining := settings.MaxAccountsPerRun - processedThisRun
+			if remaining > 0 && remaining < batchSettings.BatchLimit {
+				batchSettings.BatchLimit = remaining
+			}
+		}
+		batch, err := s.repo.ListCandidates(ctx, batchSettings)
 		if err != nil {
 			s.log(context.Background(), run.ID, AccountInspectionLogError, "load accounts failed: "+err.Error())
+			if isAccountInspectionInfraError(err) {
+				settings.Enabled = false
+				_, _ = s.repo.SaveSettings(context.Background(), settings)
+				s.finishRun(context.Background(), run, AccountInspectionRunPaused, err.Error())
+				return
+			}
 			s.finishRun(context.Background(), run, AccountInspectionRunFailed, err.Error())
 			return
 		}
@@ -430,10 +488,17 @@ func (s *AccountInspectionService) run(ctx context.Context, run *AccountInspecti
 		}
 
 		s.log(ctx, run.ID, AccountInspectionLogInfo, fmt.Sprintf("loaded batch: accounts=%d cursor=%d", len(batch.Items), settings.Cursor))
-		s.processBatch(ctx, run.ID, settings, batch.Items)
+		stats := s.processBatch(ctx, run.ID, settings, batch.Items)
+		processedThisRun += stats.Processed
 		if ctx.Err() != nil {
 			s.finishRun(context.Background(), run, AccountInspectionRunStopped, "")
 			return
+		}
+		if stats.InfraErrors > 0 {
+			consecutiveInfraErrors++
+			s.log(context.Background(), run.ID, AccountInspectionLogWarn, fmt.Sprintf("batch completed with infrastructure errors: %d consecutive_error_batches=%d", stats.InfraErrors, consecutiveInfraErrors))
+		} else {
+			consecutiveInfraErrors = 0
 		}
 
 		settings.Cursor = batch.NextCursor
@@ -445,6 +510,14 @@ func (s *AccountInspectionService) run(ctx context.Context, run *AccountInspecti
 		run.HasMore = batch.HasMore
 		_ = s.repo.UpdateRun(context.Background(), run)
 		_ = s.repo.Prune(context.Background(), defaultAccountInspectionLogRetention, defaultAccountInspectionResultRetention)
+
+		if settings.AutoPauseConsecutiveErrors > 0 && consecutiveInfraErrors >= settings.AutoPauseConsecutiveErrors {
+			settings.Enabled = false
+			_, _ = s.repo.SaveSettings(context.Background(), settings)
+			s.log(context.Background(), run.ID, AccountInspectionLogError, fmt.Sprintf("inspection paused: %d consecutive batches had database/redis style errors; cursor=%d", consecutiveInfraErrors, settings.Cursor))
+			s.finishRun(context.Background(), run, AccountInspectionRunPaused, "paused by infrastructure error protection")
+			return
+		}
 
 		if !batch.HasMore {
 			settings.Enabled = false
@@ -462,9 +535,10 @@ func (s *AccountInspectionService) run(ctx context.Context, run *AccountInspecti
 	}
 }
 
-func (s *AccountInspectionService) processBatch(ctx context.Context, runID int64, settings AccountInspectionSettings, candidates []AccountInspectionCandidate) {
+func (s *AccountInspectionService) processBatch(ctx context.Context, runID int64, settings AccountInspectionSettings, candidates []AccountInspectionCandidate) AccountInspectionBatchStats {
 	sem := make(chan struct{}, settings.Concurrency)
 	var wg sync.WaitGroup
+	infraErrors := make(chan bool, len(candidates))
 accountLoop:
 	for _, candidate := range candidates {
 		if ctx.Err() != nil {
@@ -480,13 +554,23 @@ accountLoop:
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.processCandidate(ctx, runID, settings, c)
+			infraErrors <- s.processCandidate(ctx, runID, settings, c)
 		}()
 	}
 	wg.Wait()
+	close(infraErrors)
+
+	stats := AccountInspectionBatchStats{}
+	for infraError := range infraErrors {
+		stats.Processed++
+		if infraError {
+			stats.InfraErrors++
+		}
+	}
+	return stats
 }
 
-func (s *AccountInspectionService) processCandidate(ctx context.Context, runID int64, settings AccountInspectionSettings, candidate AccountInspectionCandidate) {
+func (s *AccountInspectionService) processCandidate(ctx context.Context, runID int64, settings AccountInspectionSettings, candidate AccountInspectionCandidate) bool {
 	s.log(ctx, runID, AccountInspectionLogInfo, fmt.Sprintf("testing account: %s (%d)", candidate.Name, candidate.AccountID))
 	started := time.Now()
 
@@ -495,7 +579,7 @@ func (s *AccountInspectionService) processCandidate(ctx context.Context, runID i
 	testResult, err := s.tester.RunTestBackground(testCtx, candidate.AccountID, settings.ModelID)
 	finished := time.Now()
 	if ctx.Err() != nil {
-		return
+		return false
 	}
 
 	message := ""
@@ -527,13 +611,16 @@ func (s *AccountInspectionService) processCandidate(ctx context.Context, runID i
 		CheckedAt:  finished,
 	}
 
-	action := DecideAccountInspectionAction(settings, result, candidate.AutoDisabled)
+	action, statePatch := DecideAccountInspectionAction(settings, result, candidate, finished)
 	result.Action = action
-	statePatch := AccountInspectionStatePatch{At: finished}
 	skipStateUpdate := false
-	if action != AccountInspectionActionNone {
+	infraError := false
+	if actionRequiresAccountInspectionApply(action) {
 		if actionErr := s.applyAction(ctx, action, candidate, result); actionErr != nil {
 			result.ActionError = actionErr.Error()
+			if isAccountInspectionInfraError(actionErr) {
+				infraError = true
+			}
 			s.log(ctx, runID, AccountInspectionLogWarn, fmt.Sprintf("action failed: %s (%d) action=%s err=%v", candidate.Name, candidate.AccountID, action, actionErr))
 		} else {
 			s.log(ctx, runID, AccountInspectionLogInfo, fmt.Sprintf("action applied: %s (%d) action=%s", candidate.Name, candidate.AccountID, action))
@@ -541,14 +628,33 @@ func (s *AccountInspectionService) processCandidate(ctx context.Context, runID i
 			case AccountInspectionActionDelete:
 				skipStateUpdate = true
 			case AccountInspectionActionDisable:
-				v := true
-				statePatch.AutoDisabled = &v
-				statePatch.Reason = category
+				if candidate.Schedulable || candidate.AutoDisabled {
+					v := true
+					statePatch.AutoDisabled = &v
+					statePatch.Reason = category
+				}
 			case AccountInspectionActionRestore:
 				v := false
 				statePatch.AutoDisabled = &v
 				statePatch.Reason = ""
 			}
+		}
+	} else if action != AccountInspectionActionNone {
+		s.log(ctx, runID, AccountInspectionLogInfo, fmt.Sprintf("action queued: %s (%d) action=%s", candidate.Name, candidate.AccountID, action))
+	}
+
+	if shouldDisableQuotaAccountDuringInspection(settings, result, candidate, action) {
+		if actionErr := s.applyAction(ctx, AccountInspectionActionDisable, candidate, result); actionErr != nil {
+			result.ActionError = actionErr.Error()
+			if isAccountInspectionInfraError(actionErr) {
+				infraError = true
+			}
+			s.log(ctx, runID, AccountInspectionLogWarn, fmt.Sprintf("quota protection failed: %s (%d) err=%v", candidate.Name, candidate.AccountID, actionErr))
+		} else {
+			v := true
+			statePatch.AutoDisabled = &v
+			statePatch.Reason = category
+			s.log(ctx, runID, AccountInspectionLogInfo, fmt.Sprintf("quota protection applied: %s (%d) action=%s", candidate.Name, candidate.AccountID, AccountInspectionActionDisable))
 		}
 	}
 
@@ -557,13 +663,16 @@ func (s *AccountInspectionService) processCandidate(ctx context.Context, runID i
 	}
 
 	if err := s.repo.SaveResult(context.Background(), result); err != nil {
+		infraError = true
 		slog.Warn("account_inspection.save_result_failed", "run_id", runID, "account_id", candidate.AccountID, "error", err)
 	}
 	if !skipStateUpdate {
 		if err := s.repo.UpdateState(context.Background(), result, statePatch); err != nil {
+			infraError = true
 			slog.Warn("account_inspection.update_state_failed", "run_id", runID, "account_id", candidate.AccountID, "error", err)
 		}
 	}
+	return infraError
 }
 
 func (s *AccountInspectionService) applyAction(ctx context.Context, action string, candidate AccountInspectionCandidate, result AccountInspectionResult) error {
@@ -635,6 +744,53 @@ func NormalizeAccountInspectionSettings(settings AccountInspectionSettings) Acco
 	if settings.RecheckAfterHours > maxAccountInspectionRecheckAfterHours {
 		settings.RecheckAfterHours = maxAccountInspectionRecheckAfterHours
 	}
+	if settings.MaxAccountsPerRun < 0 {
+		settings.MaxAccountsPerRun = 0
+	}
+	if settings.MaxAccountsPerRun > maxAccountInspectionMaxAccountsPerRun {
+		settings.MaxAccountsPerRun = maxAccountInspectionMaxAccountsPerRun
+	}
+	if settings.AutoPauseConsecutiveErrors < 0 {
+		settings.AutoPauseConsecutiveErrors = 0
+	}
+	if settings.AutoPauseConsecutiveErrors > maxAccountInspectionAutoPauseErrors {
+		settings.AutoPauseConsecutiveErrors = maxAccountInspectionAutoPauseErrors
+	}
+	if settings.DeleteAuthInvalidMinConsecutive <= 0 {
+		settings.DeleteAuthInvalidMinConsecutive = defaultAccountInspectionDeleteMinConsecutive
+	}
+	if settings.DeleteQuotaExhaustedMinConsecutive <= 0 {
+		settings.DeleteQuotaExhaustedMinConsecutive = defaultAccountInspectionDeleteMinConsecutive
+	}
+	if settings.DeletePaymentRequiredMinConsecutive <= 0 {
+		settings.DeletePaymentRequiredMinConsecutive = defaultAccountInspectionDeleteMinConsecutive
+	}
+	if settings.DeleteAuthInvalidAfterHours < 0 {
+		settings.DeleteAuthInvalidAfterHours = 0
+	}
+	if settings.DeleteQuotaExhaustedAfterHours < 0 {
+		settings.DeleteQuotaExhaustedAfterHours = defaultAccountInspectionDeleteQuotaHours
+	}
+	if settings.DeletePaymentRequiredAfterHours < 0 {
+		settings.DeletePaymentRequiredAfterHours = defaultAccountInspectionDeletePaymentHours
+	}
+	if settings.LowResourceMode {
+		if settings.BatchLimit > 50 {
+			settings.BatchLimit = 50
+		}
+		if settings.Concurrency > 1 {
+			settings.Concurrency = 1
+		}
+		if settings.BatchSleepSeconds < 30 {
+			settings.BatchSleepSeconds = 30
+		}
+		if settings.MaxAccountsPerRun <= 0 || settings.MaxAccountsPerRun > defaultAccountInspectionMaxAccountsPerRun {
+			settings.MaxAccountsPerRun = defaultAccountInspectionMaxAccountsPerRun
+		}
+		if settings.AutoPauseConsecutiveErrors <= 0 || settings.AutoPauseConsecutiveErrors > defaultAccountInspectionAutoPauseErrors {
+			settings.AutoPauseConsecutiveErrors = defaultAccountInspectionAutoPauseErrors
+		}
+	}
 	return settings
 }
 
@@ -649,33 +805,111 @@ func sameAccountInspectionScanScope(a, b AccountInspectionSettings) bool {
 
 func DefaultAccountInspectionSettings() AccountInspectionSettings {
 	return NormalizeAccountInspectionSettings(AccountInspectionSettings{
-		Enabled:               false,
-		BatchLimit:            defaultAccountInspectionBatchLimit,
-		Concurrency:           defaultAccountInspectionConcurrency,
-		BatchSleepSeconds:     defaultAccountInspectionBatchSleepSeconds,
-		RecheckAfterHours:     defaultAccountInspectionRecheckAfterHours,
-		IncludeUnschedulable:  true,
-		DeleteAuthInvalid:     true,
-		DisableQuotaExhausted: true,
-		RestoreAutoDisabled:   true,
+		Enabled:                             false,
+		BatchLimit:                          defaultAccountInspectionBatchLimit,
+		Concurrency:                         defaultAccountInspectionConcurrency,
+		BatchSleepSeconds:                   defaultAccountInspectionBatchSleepSeconds,
+		RecheckAfterHours:                   defaultAccountInspectionRecheckAfterHours,
+		LowResourceMode:                     true,
+		MaxAccountsPerRun:                   defaultAccountInspectionMaxAccountsPerRun,
+		AutoPauseConsecutiveErrors:          defaultAccountInspectionAutoPauseErrors,
+		IncludeUnschedulable:                true,
+		DeleteAuthInvalid:                   true,
+		DeleteAuthInvalidMinConsecutive:     defaultAccountInspectionDeleteMinConsecutive,
+		DeleteAuthInvalidAfterHours:         0,
+		DeleteQuotaExhausted:                false,
+		DeleteQuotaExhaustedMinConsecutive:  defaultAccountInspectionDeleteMinConsecutive,
+		DeleteQuotaExhaustedAfterHours:      defaultAccountInspectionDeleteQuotaHours,
+		DeletePaymentRequired:               false,
+		DeletePaymentRequiredMinConsecutive: defaultAccountInspectionDeleteMinConsecutive,
+		DeletePaymentRequiredAfterHours:     defaultAccountInspectionDeletePaymentHours,
+		DisableQuotaExhausted:               true,
+		RestoreAutoDisabled:                 true,
 	})
 }
 
-func DecideAccountInspectionAction(settings AccountInspectionSettings, result AccountInspectionResult, autoDisabled bool) string {
+func DecideAccountInspectionAction(settings AccountInspectionSettings, result AccountInspectionResult, candidate AccountInspectionCandidate, now time.Time) (string, AccountInspectionStatePatch) {
 	settings = NormalizeAccountInspectionSettings(settings)
+	patch := AccountInspectionStatePatch{At: now}
 	if result.Status == AccountHealthStatusAvailable {
-		if settings.RestoreAutoDisabled && autoDisabled {
-			return AccountInspectionActionRestore
+		patch.UpdateDeleteCandidate = true
+		if settings.RestoreAutoDisabled && candidate.AutoDisabled {
+			return AccountInspectionActionRestore, patch
 		}
-		return AccountInspectionActionNone
+		return AccountInspectionActionNone, patch
 	}
-	if settings.DeleteAuthInvalid && isDeletableAuthInvalid(result) {
-		return AccountInspectionActionDelete
+
+	if rule, ok := accountInspectionDeleteRule(settings, result); ok {
+		count := 1
+		firstSeen := now
+		if candidate.DeleteCandidateCategory == rule.category {
+			if candidate.DeleteCandidateFirstSeenAt != nil {
+				firstSeen = *candidate.DeleteCandidateFirstSeenAt
+			}
+			count = candidate.DeleteCandidateCount + 1
+		}
+		patch.UpdateDeleteCandidate = true
+		patch.DeleteCandidateCategory = rule.category
+		patch.DeleteCandidateFirstSeenAt = &firstSeen
+		patch.DeleteCandidateCount = count
+
+		if count < rule.minConsecutive {
+			return AccountInspectionActionRetain, patch
+		}
+		if rule.afterHours > 0 && now.Sub(firstSeen) < time.Duration(rule.afterHours)*time.Hour {
+			return AccountInspectionActionPendingDelete, patch
+		}
+		return AccountInspectionActionDelete, patch
 	}
+
+	patch.UpdateDeleteCandidate = true
 	if settings.DisableQuotaExhausted && result.Category == AccountHealthCategoryQuotaExhausted {
-		return AccountInspectionActionDisable
+		if candidate.Schedulable && !candidate.AutoDisabled {
+			return AccountInspectionActionDisable, patch
+		}
+		return AccountInspectionActionNone, patch
 	}
-	return AccountInspectionActionNone
+	return AccountInspectionActionNone, patch
+}
+
+type accountInspectionDeletionRule struct {
+	category       string
+	minConsecutive int
+	afterHours     int
+}
+
+func accountInspectionDeleteRule(settings AccountInspectionSettings, result AccountInspectionResult) (accountInspectionDeletionRule, bool) {
+	if settings.DeleteAuthInvalid && isDeletableAuthInvalid(result) {
+		return accountInspectionDeletionRule{
+			category:       AccountHealthCategoryAuthInvalid,
+			minConsecutive: settings.DeleteAuthInvalidMinConsecutive,
+			afterHours:     settings.DeleteAuthInvalidAfterHours,
+		}, true
+	}
+	if settings.DeleteQuotaExhausted && result.Category == AccountHealthCategoryQuotaExhausted {
+		return accountInspectionDeletionRule{
+			category:       AccountHealthCategoryQuotaExhausted,
+			minConsecutive: settings.DeleteQuotaExhaustedMinConsecutive,
+			afterHours:     settings.DeleteQuotaExhaustedAfterHours,
+		}, true
+	}
+	if settings.DeletePaymentRequired && result.Category == AccountHealthCategoryPaymentRequired {
+		return accountInspectionDeletionRule{
+			category:       AccountHealthCategoryPaymentRequired,
+			minConsecutive: settings.DeletePaymentRequiredMinConsecutive,
+			afterHours:     settings.DeletePaymentRequiredAfterHours,
+		}, true
+	}
+	return accountInspectionDeletionRule{}, false
+}
+
+func shouldDisableQuotaAccountDuringInspection(settings AccountInspectionSettings, result AccountInspectionResult, candidate AccountInspectionCandidate, action string) bool {
+	return settings.DisableQuotaExhausted &&
+		result.Category == AccountHealthCategoryQuotaExhausted &&
+		action != AccountInspectionActionDisable &&
+		action != AccountInspectionActionDelete &&
+		candidate.Schedulable &&
+		!candidate.AutoDisabled
 }
 
 func isDeletableAuthInvalid(result AccountInspectionResult) bool {
@@ -700,6 +934,33 @@ func isAccountInspectionActiveStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func actionRequiresAccountInspectionApply(action string) bool {
+	switch action {
+	case AccountInspectionActionDelete, AccountInspectionActionDisable, AccountInspectionActionRestore:
+		return true
+	default:
+		return false
+	}
+}
+
+func isAccountInspectionInfraError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return containsAny(lower,
+		"context deadline exceeded",
+		"connection refused",
+		"server misbehaving",
+		"lookup redis",
+		"redis:",
+		"sql:",
+		"database",
+		"connection reset",
+		"broken pipe",
+	)
 }
 
 func sleepAccountInspectionWithContext(ctx context.Context, d time.Duration) bool {

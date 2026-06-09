@@ -38,6 +38,12 @@ func TestNormalizeAccountInspectionSettingsUsesSmallServerSafeBounds(t *testing.
 	if defaults.Concurrency != 1 {
 		t.Fatalf("default concurrency = %d, want 1", defaults.Concurrency)
 	}
+	if !defaults.LowResourceMode {
+		t.Fatal("default account inspection should enable low resource protection")
+	}
+	if defaults.MaxAccountsPerRun != defaultAccountInspectionMaxAccountsPerRun {
+		t.Fatalf("default max accounts per run = %d, want %d", defaults.MaxAccountsPerRun, defaultAccountInspectionMaxAccountsPerRun)
+	}
 }
 
 func TestClassifyAccountHealthCheckErrorKeepsQuotaAsRateLimited(t *testing.T) {
@@ -83,6 +89,7 @@ func TestDecideAccountInspectionAction(t *testing.T) {
 	tests := []struct {
 		name         string
 		result       AccountInspectionResult
+		schedulable  bool
 		autoDisabled bool
 		want         string
 	}{
@@ -101,6 +108,7 @@ func TestDecideAccountInspectionAction(t *testing.T) {
 				Status:   AccountHealthStatusRateLimited,
 				Category: AccountHealthCategoryQuotaExhausted,
 			},
+			schedulable: true,
 			want: AccountInspectionActionDisable,
 		},
 		{
@@ -134,10 +142,89 @@ func TestDecideAccountInspectionAction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := DecideAccountInspectionAction(settings, tt.result, tt.autoDisabled); got != tt.want {
+			got, _ := DecideAccountInspectionAction(settings, tt.result, AccountInspectionCandidate{
+				Schedulable:  tt.schedulable,
+				AutoDisabled: tt.autoDisabled,
+			}, time.Now())
+			if got != tt.want {
 				t.Fatalf("action = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDecideAccountInspectionActionRetainsUntilDeleteRuleMatures(t *testing.T) {
+	settings := DefaultAccountInspectionSettings()
+	settings.DeleteQuotaExhausted = true
+	settings.DeleteQuotaExhaustedAfterHours = 168
+	settings.DeleteQuotaExhaustedMinConsecutive = 2
+	now := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	result := AccountInspectionResult{
+		Status:   AccountHealthStatusRateLimited,
+		Category: AccountHealthCategoryQuotaExhausted,
+	}
+
+	action, patch := DecideAccountInspectionAction(settings, result, AccountInspectionCandidate{}, now)
+	if action != AccountInspectionActionRetain {
+		t.Fatalf("first action = %q, want retain", action)
+	}
+	if patch.DeleteCandidateCount != 1 {
+		t.Fatalf("first count = %d, want 1", patch.DeleteCandidateCount)
+	}
+
+	firstSeen := now.Add(-time.Hour)
+	action, patch = DecideAccountInspectionAction(settings, result, AccountInspectionCandidate{
+		DeleteCandidateCategory:    AccountHealthCategoryQuotaExhausted,
+		DeleteCandidateFirstSeenAt: &firstSeen,
+		DeleteCandidateCount:       1,
+	}, now)
+	if action != AccountInspectionActionPendingDelete {
+		t.Fatalf("second action before hold = %q, want pending delete", action)
+	}
+	if patch.DeleteCandidateCount != 2 {
+		t.Fatalf("second count = %d, want 2", patch.DeleteCandidateCount)
+	}
+
+	firstSeen = now.Add(-169 * time.Hour)
+	action, _ = DecideAccountInspectionAction(settings, result, AccountInspectionCandidate{
+		DeleteCandidateCategory:    AccountHealthCategoryQuotaExhausted,
+		DeleteCandidateFirstSeenAt: &firstSeen,
+		DeleteCandidateCount:       1,
+	}, now)
+	if action != AccountInspectionActionDelete {
+		t.Fatalf("matured action = %q, want delete", action)
+	}
+}
+
+func TestProcessCandidateDisablesQuotaAccountWhileWaitingForDeleteRule(t *testing.T) {
+	settings := DefaultAccountInspectionSettings()
+	settings.DeleteQuotaExhausted = true
+	settings.DeleteQuotaExhaustedAfterHours = 168
+	settings.DeleteQuotaExhaustedMinConsecutive = 2
+	admin := &recordingInspectionAdminService{}
+	repo := &recordingAccountInspectionRepository{}
+	tester := &quotaExhaustedInspectionTester{}
+	svc := NewAccountInspectionService(repo, admin, tester, nil)
+
+	svc.processCandidate(context.Background(), 1, settings, AccountInspectionCandidate{
+		AccountID:   42,
+		Name:        "quota",
+		Platform:    "openai",
+		Type:        "auth",
+		Schedulable: true,
+	})
+
+	if admin.disabledCount.Load() != 1 {
+		t.Fatalf("disabled count = %d, want 1", admin.disabledCount.Load())
+	}
+	if repo.savedResult.Action != AccountInspectionActionRetain {
+		t.Fatalf("saved action = %q, want retain", repo.savedResult.Action)
+	}
+	if repo.statePatch.AutoDisabled == nil || !*repo.statePatch.AutoDisabled {
+		t.Fatal("state patch should mark the account as auto-disabled during quota observation")
+	}
+	if repo.statePatch.DeleteCandidateCategory != AccountHealthCategoryQuotaExhausted {
+		t.Fatalf("delete candidate category = %q, want quota_exhausted", repo.statePatch.DeleteCandidateCategory)
 	}
 }
 
@@ -161,6 +248,12 @@ func TestSameAccountInspectionScanScope(t *testing.T) {
 	next.RecheckAfterHours = current.RecheckAfterHours + 1
 	if sameAccountInspectionScanScope(next, current) {
 		t.Fatal("changed skip window should reset the scan scope")
+	}
+
+	next = current
+	next.MaxAccountsPerRun = current.MaxAccountsPerRun / 2
+	if !sameAccountInspectionScanScope(next, current) {
+		t.Fatal("changed per-run throttle should keep the scan scope")
 	}
 }
 
@@ -203,9 +296,10 @@ func TestAccountInspectionProcessBatchStopsDispatchingAfterCancel(t *testing.T) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	var stats AccountInspectionBatchStats
 	go func() {
 		defer close(done)
-		svc.processBatch(ctx, 1, settings, []AccountInspectionCandidate{
+		stats = svc.processBatch(ctx, 1, settings, []AccountInspectionCandidate{
 			{AccountID: 1, Name: "one"},
 			{AccountID: 2, Name: "two"},
 		})
@@ -227,6 +321,9 @@ func TestAccountInspectionProcessBatchStopsDispatchingAfterCancel(t *testing.T) 
 	if got := tester.calls.Load(); got != 1 {
 		t.Fatalf("tester calls = %d, want 1", got)
 	}
+	if stats.Processed != 1 {
+		t.Fatalf("processed = %d, want 1", stats.Processed)
+	}
 }
 
 type blockingInspectionTester struct {
@@ -247,6 +344,16 @@ type successInspectionTester struct{}
 
 func (t *successInspectionTester) RunTestBackground(context.Context, int64, string) (*ScheduledTestResult, error) {
 	return &ScheduledTestResult{Status: "success", LatencyMs: 1}, nil
+}
+
+type quotaExhaustedInspectionTester struct{}
+
+func (t *quotaExhaustedInspectionTester) RunTestBackground(context.Context, int64, string) (*ScheduledTestResult, error) {
+	return &ScheduledTestResult{
+		Status:       "failed",
+		ErrorMessage: `Responses API returned 429: {"error":{"code":"usage_limit_reached","message":"usage limit reached"}}`,
+		LatencyMs:    1,
+	}, nil
 }
 
 type noopAdminService struct {
@@ -371,5 +478,33 @@ func (r *scriptedAccountInspectionRepository) RecordLog(context.Context, *int64,
 }
 
 func (r *scriptedAccountInspectionRepository) Prune(context.Context, int, int) error {
+	return nil
+}
+
+type recordingInspectionAdminService struct {
+	noopAdminService
+	disabledCount atomic.Int32
+}
+
+func (s *recordingInspectionAdminService) SetAccountSchedulable(_ context.Context, id int64, schedulable bool) (*Account, error) {
+	if !schedulable {
+		s.disabledCount.Add(1)
+	}
+	return &Account{ID: id, Status: StatusActive, Schedulable: schedulable}, nil
+}
+
+type recordingAccountInspectionRepository struct {
+	noopAccountInspectionRepository
+	savedResult AccountInspectionResult
+	statePatch  AccountInspectionStatePatch
+}
+
+func (r *recordingAccountInspectionRepository) SaveResult(_ context.Context, result AccountInspectionResult) error {
+	r.savedResult = result
+	return nil
+}
+
+func (r *recordingAccountInspectionRepository) UpdateState(_ context.Context, _ AccountInspectionResult, patch AccountInspectionStatePatch) error {
+	r.statePatch = patch
 	return nil
 }

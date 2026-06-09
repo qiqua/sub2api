@@ -68,23 +68,43 @@
           <div class="grid gap-4 lg:grid-cols-4">
             <label class="field">
               <span>单批限速数量</span>
-              <input v-model.number="form.batch_limit" type="number" min="1" max="500" :disabled="running" />
-              <small>不是只扫这一批；后台会自动继续直到扫完整个范围。建议 50-100。</small>
+              <input v-model.number="form.batch_limit" type="number" min="1" :max="form.low_resource_mode ? 50 : 500" :disabled="running" />
+              <small>不是只扫这一批；后台会自动继续直到扫完整个范围。低配模式最多 50。</small>
             </label>
             <label class="field">
               <span>检测并发</span>
-              <input v-model.number="form.concurrency" type="number" min="1" max="5" :disabled="running" />
-              <small>2H2G 建议保持 1。</small>
+              <input v-model.number="form.concurrency" type="number" min="1" :max="form.low_resource_mode ? 1 : 5" :disabled="running" />
+              <small>2H2G 建议保持 1，低配模式会强制为 1。</small>
             </label>
             <label class="field">
               <span>限速间隔秒</span>
-              <input v-model.number="form.batch_sleep_seconds" type="number" min="1" max="3600" :disabled="running" />
-              <small>每个后台小批次之间休眠，避免 CPU 瞬间打满。</small>
+              <input v-model.number="form.batch_sleep_seconds" type="number" :min="form.low_resource_mode ? 30 : 1" max="3600" :disabled="running" />
+              <small>每个后台小批次之间休眠，低配模式最少 30 秒。</small>
             </label>
             <label class="field">
               <span>跳过已扫小时</span>
               <input v-model.number="form.recheck_after_hours" type="number" min="1" max="2160" :disabled="running" />
               <small>默认 168 小时，扫过的下次跳过。</small>
+            </label>
+          </div>
+
+          <div class="mt-4 protection-grid">
+            <label class="toggle-row">
+              <input v-model="form.low_resource_mode" type="checkbox" :disabled="running" />
+              <span>
+                <strong>低配服务器保护模式</strong>
+                <small>默认开启：并发 1、单批最多 50、批次间隔至少 30 秒，适合 2H2G。</small>
+              </span>
+            </label>
+            <label class="field">
+              <span>单次最多巡检账号</span>
+              <input v-model.number="form.max_accounts_per_run" type="number" min="1" max="100000" :disabled="running" />
+              <small>达到后自动暂停，点开始会从 cursor 继续，不会重扫已扫账号。</small>
+            </label>
+            <label class="field">
+              <span>连续异常批次自动暂停</span>
+              <input v-model.number="form.auto_pause_consecutive_errors" type="number" min="1" max="100" :disabled="running" />
+              <small>遇到 Redis/Postgres 超时或拒绝连接时保护服务器。</small>
             </label>
           </div>
 
@@ -94,13 +114,6 @@
               <span>
                 <strong>包含已关闭调度账号</strong>
                 <small>用于检查之前被关掉的账号是否恢复。</small>
-              </span>
-            </label>
-            <label class="toggle-row">
-              <input v-model="form.delete_auth_invalid" type="checkbox" :disabled="running" />
-              <span>
-                <strong>扫出 401 / refresh token 失效后删除</strong>
-                <small>只对明确认证失效执行删除，402 不会默认删除。</small>
               </span>
             </label>
             <label class="toggle-row">
@@ -119,6 +132,72 @@
             </label>
           </div>
 
+          <div class="mt-4">
+            <div class="panel-title">删除规则</div>
+            <div class="panel-subtitle">可配置“连续扫出几次 + 保留观察多久”才删除；未到规则前会显示保留或待删除。</div>
+            <div class="mt-3 grid gap-3 xl:grid-cols-3">
+              <div class="rule-card">
+                <label class="toggle-row rule-toggle">
+                  <input v-model="form.delete_auth_invalid" type="checkbox" :disabled="running" />
+                  <span>
+                    <strong>401 / refresh token 失效</strong>
+                    <small>默认开启。明确认证失效才进入删除规则。</small>
+                  </span>
+                </label>
+                <div class="rule-fields">
+                  <label class="field">
+                    <span>连续次数</span>
+                    <input v-model.number="form.delete_auth_invalid_min_consecutive" type="number" min="1" max="20" :disabled="running || !form.delete_auth_invalid" />
+                  </label>
+                  <label class="field">
+                    <span>保留小时</span>
+                    <input v-model.number="form.delete_auth_invalid_after_hours" type="number" min="0" max="2160" :disabled="running || !form.delete_auth_invalid" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="rule-card">
+                <label class="toggle-row rule-toggle">
+                  <input v-model="form.delete_quota_exhausted" type="checkbox" :disabled="running" />
+                  <span>
+                    <strong>额度不足 / usage limit</strong>
+                    <small>默认只关闭调度。开启后可按规则观察后删除。</small>
+                  </span>
+                </label>
+                <div class="rule-fields">
+                  <label class="field">
+                    <span>连续次数</span>
+                    <input v-model.number="form.delete_quota_exhausted_min_consecutive" type="number" min="1" max="20" :disabled="running || !form.delete_quota_exhausted" />
+                  </label>
+                  <label class="field">
+                    <span>保留小时</span>
+                    <input v-model.number="form.delete_quota_exhausted_after_hours" type="number" min="0" max="2160" :disabled="running || !form.delete_quota_exhausted" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="rule-card">
+                <label class="toggle-row rule-toggle">
+                  <input v-model="form.delete_payment_required" type="checkbox" :disabled="running" />
+                  <span>
+                    <strong>402 / payment required</strong>
+                    <small>默认不删除。确认要清理欠费类账号时再开启。</small>
+                  </span>
+                </label>
+                <div class="rule-fields">
+                  <label class="field">
+                    <span>连续次数</span>
+                    <input v-model.number="form.delete_payment_required_min_consecutive" type="number" min="1" max="20" :disabled="running || !form.delete_payment_required" />
+                  </label>
+                  <label class="field">
+                    <span>保留小时</span>
+                    <input v-model.number="form.delete_payment_required_after_hours" type="number" min="0" max="2160" :disabled="running || !form.delete_payment_required" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="mt-4 rounded-xl bg-gray-50 p-3 text-sm text-gray-600 dark:bg-dark-700/60 dark:text-gray-300">
             当前筛选：{{ filterSummary }}。后台会从上次进度继续自动推进；进度游标 cursor={{ form.cursor || 0 }}。
           </div>
@@ -126,7 +205,15 @@
 
         <div class="panel">
           <div class="panel-title">自动处置结果</div>
-          <div class="mt-4 grid grid-cols-3 gap-3">
+          <div class="mt-4 grid grid-cols-2 gap-3">
+            <div class="action-stat">
+              <span>已保留</span>
+              <strong>{{ summary.retained }}</strong>
+            </div>
+            <div class="action-stat">
+              <span>待删除</span>
+              <strong>{{ summary.pending_delete }}</strong>
+            </div>
             <div class="action-stat">
               <span>已删除</span>
               <strong>{{ summary.deleted }}</strong>
@@ -138,6 +225,10 @@
             <div class="action-stat">
               <span>已恢复</span>
               <strong>{{ summary.restored }}</strong>
+            </div>
+            <div class="action-stat">
+              <span>失败</span>
+              <strong>{{ summary.action_failed }}</strong>
             </div>
           </div>
           <div v-if="summary.action_failed > 0" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-200">
@@ -230,12 +321,23 @@ const form = reactive<AccountInspectionSettings>({
   enabled: false,
   filters: {},
   model_id: '',
-  batch_limit: 100,
+  batch_limit: 50,
   concurrency: 1,
-  batch_sleep_seconds: 15,
+  batch_sleep_seconds: 30,
   recheck_after_hours: 168,
+  low_resource_mode: true,
+  max_accounts_per_run: 1000,
+  auto_pause_consecutive_errors: 3,
   include_unschedulable: true,
   delete_auth_invalid: true,
+  delete_auth_invalid_min_consecutive: 1,
+  delete_auth_invalid_after_hours: 0,
+  delete_quota_exhausted: false,
+  delete_quota_exhausted_min_consecutive: 1,
+  delete_quota_exhausted_after_hours: 168,
+  delete_payment_required: false,
+  delete_payment_required_min_consecutive: 1,
+  delete_payment_required_after_hours: 168,
   disable_quota_exhausted: true,
   restore_auto_disabled: true,
   cursor: 0
@@ -253,6 +355,8 @@ const emptySummary: AccountInspectionSummary = {
   other_failure: 0,
   unknown: 0,
   deleted: 0,
+  retained: 0,
+  pending_delete: 0,
   disabled: 0,
   restored: 0,
   action_failed: 0,
@@ -275,6 +379,7 @@ const runStateLabel = computed(() => {
   if (!run) return '尚未开始'
   if (run.status === 'running') return '巡检中'
   if (run.status === 'stopping') return '停止中'
+  if (run.status === 'paused') return '已暂停，可继续'
   if (run.status === 'completed') return run.has_more ? '本批完成，可继续' : '已完成'
   if (run.status === 'stopped') return '已取消'
   if (run.status === 'failed') return '失败'
@@ -448,12 +553,23 @@ const normalizedSettings = (): AccountInspectionSettings => ({
   ...form,
   filters: sanitizeFilters(props.filters),
   model_id: String(form.model_id || '').trim(),
-  batch_limit: clampNumber(form.batch_limit, 1, 500, 100),
-  concurrency: clampNumber(form.concurrency, 1, 5, 1),
-  batch_sleep_seconds: clampNumber(form.batch_sleep_seconds, 1, 3600, 15),
+  low_resource_mode: Boolean(form.low_resource_mode),
+  batch_limit: clampNumber(form.batch_limit, 1, form.low_resource_mode ? 50 : 500, 50),
+  concurrency: clampNumber(form.concurrency, 1, form.low_resource_mode ? 1 : 5, 1),
+  batch_sleep_seconds: clampNumber(form.batch_sleep_seconds, form.low_resource_mode ? 30 : 1, 3600, 30),
   recheck_after_hours: clampNumber(form.recheck_after_hours, 1, 2160, 168),
+  max_accounts_per_run: clampNumber(form.max_accounts_per_run, 1, 100000, 1000),
+  auto_pause_consecutive_errors: clampNumber(form.auto_pause_consecutive_errors, 1, 100, 3),
   include_unschedulable: Boolean(form.include_unschedulable),
   delete_auth_invalid: Boolean(form.delete_auth_invalid),
+  delete_auth_invalid_min_consecutive: clampNumber(form.delete_auth_invalid_min_consecutive, 1, 20, 1),
+  delete_auth_invalid_after_hours: clampNumber(form.delete_auth_invalid_after_hours, 0, 2160, 0),
+  delete_quota_exhausted: Boolean(form.delete_quota_exhausted),
+  delete_quota_exhausted_min_consecutive: clampNumber(form.delete_quota_exhausted_min_consecutive, 1, 20, 1),
+  delete_quota_exhausted_after_hours: clampNumber(form.delete_quota_exhausted_after_hours, 0, 2160, 168),
+  delete_payment_required: Boolean(form.delete_payment_required),
+  delete_payment_required_min_consecutive: clampNumber(form.delete_payment_required_min_consecutive, 1, 20, 1),
+  delete_payment_required_after_hours: clampNumber(form.delete_payment_required_after_hours, 0, 2160, 168),
   disable_quota_exhausted: Boolean(form.disable_quota_exhausted),
   restore_auto_disabled: Boolean(form.restore_auto_disabled),
   cursor: Number(form.cursor || 0)
@@ -510,6 +626,8 @@ const categoryLabel = (category: string, httpStatus?: number) => {
 const actionLabel = (action: string) => {
   switch (action) {
     case 'delete': return '已删除'
+    case 'retain': return '已保留'
+    case 'delete_pending': return '待删除'
     case 'disable': return '已关闭'
     case 'restore': return '已恢复'
     default: return action
@@ -601,6 +719,22 @@ const formatClock = (value?: string) => {
 
 .toggle-row small {
   @apply mt-1 block text-xs text-gray-500 dark:text-gray-400;
+}
+
+.protection-grid {
+  @apply grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)];
+}
+
+.rule-card {
+  @apply rounded-xl border border-gray-200 p-3 dark:border-dark-600;
+}
+
+.rule-toggle {
+  @apply border-0 p-0;
+}
+
+.rule-fields {
+  @apply mt-3 grid grid-cols-2 gap-3;
 }
 
 .action-stat {

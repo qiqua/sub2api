@@ -144,7 +144,9 @@ func (r *accountInspectionRepository) ListCandidates(ctx context.Context, settin
 	limit := settings.BatchLimit + 1
 	args = append(args, limit)
 	query := fmt.Sprintf(`
-		SELECT a.id, a.name, a.platform, a.type, a.schedulable, COALESCE(s.auto_disabled, FALSE)
+		SELECT a.id, a.name, a.platform, a.type, a.schedulable, COALESCE(s.auto_disabled, FALSE),
+			COALESCE(s.delete_candidate_category, ''), s.delete_candidate_first_seen_at,
+			COALESCE(s.delete_candidate_count, 0)
 		FROM accounts a
 		LEFT JOIN account_inspection_states s ON s.account_id = a.id
 		%s
@@ -162,8 +164,22 @@ func (r *accountInspectionRepository) ListCandidates(ctx context.Context, settin
 	nextCursor := settings.Cursor
 	for rows.Next() {
 		var item service.AccountInspectionCandidate
-		if err := rows.Scan(&item.AccountID, &item.Name, &item.Platform, &item.Type, &item.Schedulable, &item.AutoDisabled); err != nil {
+		var firstSeen sql.NullTime
+		if err := rows.Scan(
+			&item.AccountID,
+			&item.Name,
+			&item.Platform,
+			&item.Type,
+			&item.Schedulable,
+			&item.AutoDisabled,
+			&item.DeleteCandidateCategory,
+			&firstSeen,
+			&item.DeleteCandidateCount,
+		); err != nil {
 			return service.AccountInspectionCandidateBatch{}, err
+		}
+		if firstSeen.Valid {
+			item.DeleteCandidateFirstSeenAt = &firstSeen.Time
 		}
 		if len(items) >= settings.BatchLimit {
 			hasMore = true
@@ -214,6 +230,12 @@ func (r *accountInspectionRepository) UpdateState(ctx context.Context, result se
 	updateAutoDisabledReasonSQL := "account_inspection_states.auto_disabled_reason"
 	updateAutoDisabledAtSQL := "account_inspection_states.auto_disabled_at"
 	updateRestoredAtSQL := "account_inspection_states.restored_at"
+	insertDeleteCandidateCategorySQL := "''"
+	insertDeleteCandidateFirstSeenAtSQL := "NULL"
+	insertDeleteCandidateCountSQL := "0"
+	updateDeleteCandidateCategorySQL := "account_inspection_states.delete_candidate_category"
+	updateDeleteCandidateFirstSeenAtSQL := "account_inspection_states.delete_candidate_first_seen_at"
+	updateDeleteCandidateCountSQL := "account_inspection_states.delete_candidate_count"
 	args := []any{
 		result.AccountID,
 		result.RunID,
@@ -240,14 +262,32 @@ func (r *accountInspectionRepository) UpdateState(ctx context.Context, result se
 			updateRestoredAtSQL = insertRestoredAtSQL
 		}
 	}
+	if patch.UpdateDeleteCandidate {
+		firstSeen := any(nil)
+		if patch.DeleteCandidateFirstSeenAt != nil && patch.DeleteCandidateCategory != "" {
+			firstSeen = *patch.DeleteCandidateFirstSeenAt
+		}
+		count := patch.DeleteCandidateCount
+		if patch.DeleteCandidateCategory == "" {
+			count = 0
+		}
+		args = append(args, patch.DeleteCandidateCategory, firstSeen, count)
+		insertDeleteCandidateCategorySQL = fmt.Sprintf("$%d", len(args)-2)
+		insertDeleteCandidateFirstSeenAtSQL = fmt.Sprintf("$%d", len(args)-1)
+		insertDeleteCandidateCountSQL = fmt.Sprintf("$%d", len(args))
+		updateDeleteCandidateCategorySQL = insertDeleteCandidateCategorySQL
+		updateDeleteCandidateFirstSeenAtSQL = insertDeleteCandidateFirstSeenAtSQL
+		updateDeleteCandidateCountSQL = insertDeleteCandidateCountSQL
+	}
 
 	query := fmt.Sprintf(`
 		INSERT INTO account_inspection_states (
 			account_id, last_run_id, last_status, last_category, last_http_status, last_error_code,
 			last_message, last_checked_at, auto_disabled, auto_disabled_reason, auto_disabled_at, restored_at,
+			delete_candidate_category, delete_candidate_first_seen_at, delete_candidate_count,
 			created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, %s, %s, %s, %s, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
 		ON CONFLICT (account_id) DO UPDATE SET
 			last_run_id = EXCLUDED.last_run_id,
 			last_status = EXCLUDED.last_status,
@@ -260,8 +300,14 @@ func (r *accountInspectionRepository) UpdateState(ctx context.Context, result se
 			auto_disabled_reason = %s,
 			auto_disabled_at = %s,
 			restored_at = %s,
+			delete_candidate_category = %s,
+			delete_candidate_first_seen_at = %s,
+			delete_candidate_count = %s,
 			updated_at = NOW()
-	`, insertAutoDisabledSQL, insertAutoDisabledReasonSQL, insertAutoDisabledAtSQL, insertRestoredAtSQL, updateAutoDisabledSQL, updateAutoDisabledReasonSQL, updateAutoDisabledAtSQL, updateRestoredAtSQL)
+	`, insertAutoDisabledSQL, insertAutoDisabledReasonSQL, insertAutoDisabledAtSQL, insertRestoredAtSQL,
+		insertDeleteCandidateCategorySQL, insertDeleteCandidateFirstSeenAtSQL, insertDeleteCandidateCountSQL,
+		updateAutoDisabledSQL, updateAutoDisabledReasonSQL, updateAutoDisabledAtSQL, updateRestoredAtSQL,
+		updateDeleteCandidateCategorySQL, updateDeleteCandidateFirstSeenAtSQL, updateDeleteCandidateCountSQL)
 	_, err := r.db.ExecContext(ctx, query, args...)
 	return err
 }
@@ -394,6 +440,10 @@ func (r *accountInspectionRepository) GetSummary(ctx context.Context, runID int6
 		switch action {
 		case service.AccountInspectionActionDelete:
 			summary.Deleted += count
+		case service.AccountInspectionActionRetain:
+			summary.Retained += count
+		case service.AccountInspectionActionPendingDelete:
+			summary.PendingDelete += count
 		case service.AccountInspectionActionDisable:
 			summary.Disabled += count
 		case service.AccountInspectionActionRestore:

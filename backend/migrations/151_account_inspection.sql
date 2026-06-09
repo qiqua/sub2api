@@ -29,15 +29,30 @@ CREATE TABLE IF NOT EXISTS account_inspection_states (
     auto_disabled_reason VARCHAR(100) NOT NULL DEFAULT '',
     auto_disabled_at TIMESTAMPTZ,
     restored_at TIMESTAMPTZ,
+    delete_candidate_category VARCHAR(50) NOT NULL DEFAULT '',
+    delete_candidate_first_seen_at TIMESTAMPTZ,
+    delete_candidate_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE account_inspection_states
+    ADD COLUMN IF NOT EXISTS delete_candidate_category VARCHAR(50) NOT NULL DEFAULT '';
+
+ALTER TABLE account_inspection_states
+    ADD COLUMN IF NOT EXISTS delete_candidate_first_seen_at TIMESTAMPTZ;
+
+ALTER TABLE account_inspection_states
+    ADD COLUMN IF NOT EXISTS delete_candidate_count INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_account_inspection_states_last_checked
     ON account_inspection_states (last_checked_at);
 
 CREATE INDEX IF NOT EXISTS idx_account_inspection_states_auto_disabled
     ON account_inspection_states (auto_disabled);
+
+CREATE INDEX IF NOT EXISTS idx_account_inspection_states_delete_candidate
+    ON account_inspection_states (delete_candidate_category, delete_candidate_first_seen_at);
 
 CREATE TABLE IF NOT EXISTS account_inspection_results (
     id BIGSERIAL PRIMARY KEY,
@@ -86,12 +101,23 @@ VALUES ('account_inspection_settings', '{
   "enabled": false,
   "filters": {},
   "model_id": "",
-  "batch_limit": 100,
+  "batch_limit": 50,
   "concurrency": 1,
-  "batch_sleep_seconds": 15,
+  "batch_sleep_seconds": 30,
   "recheck_after_hours": 168,
+  "low_resource_mode": true,
+  "max_accounts_per_run": 1000,
+  "auto_pause_consecutive_errors": 3,
   "include_unschedulable": true,
   "delete_auth_invalid": true,
+  "delete_auth_invalid_min_consecutive": 1,
+  "delete_auth_invalid_after_hours": 0,
+  "delete_quota_exhausted": false,
+  "delete_quota_exhausted_min_consecutive": 1,
+  "delete_quota_exhausted_after_hours": 168,
+  "delete_payment_required": false,
+  "delete_payment_required_min_consecutive": 1,
+  "delete_payment_required_after_hours": 168,
   "disable_quota_exhausted": true,
   "restore_auto_disabled": true,
   "cursor": 0

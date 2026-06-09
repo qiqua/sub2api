@@ -500,8 +500,19 @@ export interface AccountInspectionSettings {
   concurrency: number
   batch_sleep_seconds: number
   recheck_after_hours: number
+  low_resource_mode: boolean
+  max_accounts_per_run: number
+  auto_pause_consecutive_errors: number
   include_unschedulable: boolean
   delete_auth_invalid: boolean
+  delete_auth_invalid_min_consecutive: number
+  delete_auth_invalid_after_hours: number
+  delete_quota_exhausted: boolean
+  delete_quota_exhausted_min_consecutive: number
+  delete_quota_exhausted_after_hours: number
+  delete_payment_required: boolean
+  delete_payment_required_min_consecutive: number
+  delete_payment_required_after_hours: number
   disable_quota_exhausted: boolean
   restore_auto_disabled: boolean
   cursor?: number
@@ -510,7 +521,7 @@ export interface AccountInspectionSettings {
 
 export interface AccountInspectionRun {
   id: number
-  status: 'queued' | 'running' | 'stopping' | 'stopped' | 'completed' | 'failed'
+  status: 'queued' | 'running' | 'stopping' | 'stopped' | 'paused' | 'completed' | 'failed'
   settings_snapshot: AccountInspectionSettings
   total_accounts: number
   cursor: number
@@ -535,6 +546,8 @@ export interface AccountInspectionSummary {
   other_failure: number
   unknown: number
   deleted: number
+  retained: number
+  pending_delete: number
   disabled: number
   restored: number
   action_failed: number
@@ -554,7 +567,7 @@ export interface AccountInspectionResult {
   error_code?: string
   message?: string
   latency_ms?: number
-  action: 'none' | 'delete' | 'disable' | 'restore'
+  action: 'none' | 'delete' | 'retain' | 'delete_pending' | 'disable' | 'restore'
   action_error?: string
   checked_at: string
   created_at?: string
