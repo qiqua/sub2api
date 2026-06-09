@@ -62,6 +62,15 @@
                 </div>
               </div>
 
+              <button
+                class="btn btn-primary px-3"
+                title="账号巡检"
+                @click="openHealthCheck"
+              >
+                <Icon name="refresh" size="sm" class="md:mr-1.5" />
+                <span class="hidden md:inline">账号巡检</span>
+              </button>
+
               <!-- More Tools Dropdown -->
               <div class="relative" ref="accountToolsDropdownRef">
                 <button
@@ -129,7 +138,7 @@
                       <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
                         <Icon name="refresh" size="sm" />
                       </span>
-                      <span class="flex-1 text-left">批量检测账号</span>
+                      <span class="flex-1 text-left">账号巡检</span>
                       <span
                         v-if="selIds.length"
                         class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
