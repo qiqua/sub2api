@@ -32,7 +32,7 @@ func (r *accountInspectionRepository) GetSettings(ctx context.Context) (service.
 	if err != nil {
 		if errors.Is(err, service.ErrSettingNotFound) {
 			defaults := service.DefaultAccountInspectionSettings()
-			if saveErr := r.SaveSettings(ctx, defaults); saveErr != nil {
+			if _, saveErr := r.SaveSettings(ctx, defaults); saveErr != nil {
 				return defaults, saveErr
 			}
 			return defaults, nil
