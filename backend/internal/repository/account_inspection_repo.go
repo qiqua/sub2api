@@ -540,12 +540,14 @@ func accountInspectionCandidateWhere(settings service.AccountInspectionSettings)
 		clauses = append(clauses, "a.schedulable = TRUE")
 	}
 
-	args = append(args, settings.RecheckAfterHours)
-	recheckArg := len(args)
-	clauses = append(clauses, fmt.Sprintf(`(
-		s.last_checked_at IS NULL OR
-		s.last_checked_at <= NOW() - ($%d::int * INTERVAL '1 hour')
-	)`, recheckArg))
+	if settings.RecheckAfterHours > 0 {
+		args = append(args, settings.RecheckAfterHours)
+		recheckArg := len(args)
+		clauses = append(clauses, fmt.Sprintf(`(
+			s.last_checked_at IS NULL OR
+			s.last_checked_at <= NOW() - ($%d::int * INTERVAL '1 hour')
+		)`, recheckArg))
+	}
 
 	return "WHERE " + strings.Join(clauses, " AND "), args, nil
 }

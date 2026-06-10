@@ -52,7 +52,7 @@ func (h *AccountInspectionHandler) Start(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "account inspection service unavailable")
 		return
 	}
-	run, err := h.svc.StartRun(c.Request.Context())
+	run, err := h.svc.StartRun(c.Request.Context(), true)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return

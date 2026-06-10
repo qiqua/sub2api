@@ -32,23 +32,23 @@ const (
 )
 
 const (
-	defaultAccountInspectionBatchLimit          = 50
-	defaultAccountInspectionConcurrency         = 1
-	defaultAccountInspectionBatchSleepSeconds   = 30
-	defaultAccountInspectionRecheckAfterHours   = 168
-	defaultAccountInspectionMaxAccountsPerRun   = 1000
-	defaultAccountInspectionAutoPauseErrors     = 3
+	defaultAccountInspectionBatchLimit           = 50
+	defaultAccountInspectionConcurrency          = 1
+	defaultAccountInspectionBatchSleepSeconds    = 30
+	defaultAccountInspectionRecheckAfterHours    = 168
+	defaultAccountInspectionMaxAccountsPerRun    = 1000
+	defaultAccountInspectionAutoPauseErrors      = 3
 	defaultAccountInspectionDeleteMinConsecutive = 1
 	defaultAccountInspectionDeleteQuotaHours     = 168
 	defaultAccountInspectionDeletePaymentHours   = 168
-	defaultAccountInspectionLogRetention        = 1000
-	defaultAccountInspectionResultRetention     = 5000
-	maxAccountInspectionBatchLimit              = 500
-	maxAccountInspectionConcurrency             = 5
-	maxAccountInspectionBatchSleepSeconds       = 3600
-	maxAccountInspectionRecheckAfterHours       = 24 * 90
-	maxAccountInspectionMaxAccountsPerRun       = 100000
-	maxAccountInspectionAutoPauseErrors         = 100
+	defaultAccountInspectionLogRetention         = 1000
+	defaultAccountInspectionResultRetention      = 5000
+	maxAccountInspectionBatchLimit               = 500
+	maxAccountInspectionConcurrency              = 5
+	maxAccountInspectionBatchSleepSeconds        = 3600
+	maxAccountInspectionRecheckAfterHours        = 24 * 90
+	maxAccountInspectionMaxAccountsPerRun        = 100000
+	maxAccountInspectionAutoPauseErrors          = 100
 )
 
 type AccountInspectionTester interface {
@@ -97,7 +97,7 @@ type AccountInspectionCandidate struct {
 	Platform                   string
 	Type                       string
 	Schedulable                bool
-	AutoDisabled              bool
+	AutoDisabled               bool
 	DeleteCandidateCategory    string
 	DeleteCandidateFirstSeenAt *time.Time
 	DeleteCandidateCount       int
@@ -175,22 +175,22 @@ type AccountInspectionSummary struct {
 
 type AccountInspectionStatus struct {
 	Settings       AccountInspectionSettings `json:"settings"`
-	Run            *AccountInspectionRun      `json:"run,omitempty"`
-	Summary        AccountInspectionSummary   `json:"summary"`
-	CandidateTotal int64                      `json:"candidate_total"`
-	Running        bool                       `json:"running"`
-	RecentResults  []AccountInspectionResult  `json:"recent_results"`
-	Logs           []AccountInspectionLog     `json:"logs"`
+	Run            *AccountInspectionRun     `json:"run,omitempty"`
+	Summary        AccountInspectionSummary  `json:"summary"`
+	CandidateTotal int64                     `json:"candidate_total"`
+	Running        bool                      `json:"running"`
+	RecentResults  []AccountInspectionResult `json:"recent_results"`
+	Logs           []AccountInspectionLog    `json:"logs"`
 }
 
 type AccountInspectionStatePatch struct {
-	AutoDisabled              *bool
-	Reason                    string
-	At                        time.Time
-	UpdateDeleteCandidate     bool
-	DeleteCandidateCategory   string
+	AutoDisabled               *bool
+	Reason                     string
+	At                         time.Time
+	UpdateDeleteCandidate      bool
+	DeleteCandidateCategory    string
 	DeleteCandidateFirstSeenAt *time.Time
-	DeleteCandidateCount      int
+	DeleteCandidateCount       int
 }
 
 type AccountInspectionBatchStats struct {
@@ -347,7 +347,7 @@ func (s *AccountInspectionService) UpdateSettings(ctx context.Context, settings 
 	return s.repo.SaveSettings(ctx, settings)
 }
 
-func (s *AccountInspectionService) StartRun(ctx context.Context) (*AccountInspectionRun, error) {
+func (s *AccountInspectionService) StartRun(ctx context.Context, resetCursor ...bool) (*AccountInspectionRun, error) {
 	if s == nil || s.repo == nil || s.adminSvc == nil || s.tester == nil {
 		return nil, errors.New("account inspection service is not configured")
 	}
@@ -365,6 +365,15 @@ func (s *AccountInspectionService) StartRun(ctx context.Context) (*AccountInspec
 	}
 	settings = NormalizeAccountInspectionSettings(settings)
 	settings.Enabled = true
+	if len(resetCursor) > 0 && resetCursor[0] {
+		latestRun, err := s.repo.GetLatestRun(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if latestRun == nil || latestRun.Status != AccountInspectionRunPaused || !latestRun.HasMore {
+			settings.Cursor = 0
+		}
+	}
 	settings, err = s.repo.SaveSettings(ctx, settings)
 	if err != nil {
 		return nil, err
@@ -738,7 +747,7 @@ func NormalizeAccountInspectionSettings(settings AccountInspectionSettings) Acco
 	if settings.BatchSleepSeconds > maxAccountInspectionBatchSleepSeconds {
 		settings.BatchSleepSeconds = maxAccountInspectionBatchSleepSeconds
 	}
-	if settings.RecheckAfterHours <= 0 {
+	if settings.RecheckAfterHours < 0 {
 		settings.RecheckAfterHours = defaultAccountInspectionRecheckAfterHours
 	}
 	if settings.RecheckAfterHours > maxAccountInspectionRecheckAfterHours {

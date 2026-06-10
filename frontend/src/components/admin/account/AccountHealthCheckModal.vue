@@ -9,9 +9,9 @@
     <div class="inspection-shell">
       <section class="inspection-hero">
         <div>
-          <div class="text-sm font-medium text-gray-500 dark:text-gray-400">可用账号总数</div>
+          <div class="text-sm font-medium text-gray-500 dark:text-gray-400">候选账号总数</div>
           <div class="mt-2 text-4xl font-semibold text-gray-950 dark:text-white">{{ displayTotal }}</div>
-          <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">会自动巡检当前筛选范围内全部符合条件账号</div>
+          <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">会按当前筛选和巡检策略计算候选池</div>
         </div>
 
         <div class="min-w-0 flex-1">
@@ -56,8 +56,8 @@
             <div>
               <div class="panel-title">巡检范围与自动处置</div>
               <div class="panel-subtitle">
-                点击开始后会自动扫完整个当前筛选范围，不受列表 50 条分页限制。
-                单批数量、并发和间隔只是限速保护，用来防止 2H2G 服务器被瞬间打满。
+                点击开始会重新计算当前筛选范围的候选池，不受列表 50 条分页限制。
+                单批数量、并发、间隔和跳过已扫时间是限速保护，用来防止 2H2G 服务器被瞬间打满。
               </div>
             </div>
             <button class="btn btn-secondary btn-sm" :disabled="saving || running" @click="saveSettings">
@@ -83,8 +83,8 @@
             </label>
             <label class="field">
               <span>跳过已扫小时</span>
-              <input v-model.number="form.recheck_after_hours" type="number" min="1" max="2160" :disabled="running" />
-              <small>默认 168 小时，扫过的下次跳过。</small>
+              <input v-model.number="form.recheck_after_hours" type="number" min="0" max="2160" :disabled="running" />
+              <small>默认 168 小时。填 0 表示不跳过已扫记录，会把最近扫过的账号也重新纳入候选。</small>
             </label>
           </div>
 
@@ -99,7 +99,7 @@
             <label class="field">
               <span>单次最多巡检账号</span>
               <input v-model.number="form.max_accounts_per_run" type="number" min="1" max="100000" :disabled="running" />
-              <small>达到后自动暂停，点开始会从 cursor 继续，不会重扫已扫账号。</small>
+              <small>达到后自动暂停；再次开始会从暂停 cursor 继续，普通开始会重新计算候选池。</small>
             </label>
             <label class="field">
               <span>连续异常批次自动暂停</span>
@@ -199,7 +199,11 @@
           </div>
 
           <div class="mt-4 rounded-xl bg-gray-50 p-3 text-sm text-gray-600 dark:bg-dark-700/60 dark:text-gray-300">
-            当前筛选：{{ filterSummary }}。后台会从上次进度继续自动推进；进度游标 cursor={{ form.cursor || 0 }}。
+            <div>当前筛选：{{ filterSummary }}。</div>
+            <div class="mt-1">当前策略：{{ scanPolicySummary }}。</div>
+            <div v-if="zeroCandidateHint" class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-200">
+              {{ zeroCandidateHint }}
+            </div>
           </div>
         </div>
 
@@ -419,6 +423,28 @@ const filterSummary = computed(() => {
   ].filter(Boolean)
   return parts.length > 0 ? parts.join('，') : '全部账号'
 })
+const scanPolicySummary = computed(() => {
+  const parts = [
+    `单批 ${form.batch_limit || 50}`,
+    `并发 ${form.concurrency || 1}`,
+    `批次间隔 ${form.batch_sleep_seconds || 30}s`,
+    form.recheck_after_hours > 0 ? `跳过 ${form.recheck_after_hours} 小时内已扫账号` : '不跳过已扫账号',
+    `单次上限 ${form.max_accounts_per_run || 1000}`
+  ]
+  if (form.low_resource_mode) {
+    parts.push('低配保护已开启')
+  }
+  return parts.join('，')
+})
+const zeroCandidateHint = computed(() => {
+  if (running.value || candidateTotal.value > 0 || summary.value.checked > 0) return ''
+  const reasons = [
+    '当前页面筛选范围内没有符合条件的账号',
+    form.recheck_after_hours > 0 ? `这些账号可能在最近 ${form.recheck_after_hours} 小时内已经巡检过，被跳过了` : '',
+    !form.include_unschedulable ? '已关闭调度的账号被排除了' : ''
+  ].filter(Boolean)
+  return `当前候选为 0。可能原因：${reasons.join('；')}。如果要立刻重扫，把“跳过已扫小时”改成 0 后保存配置再开始。`
+})
 
 watch(
   () => props.show,
@@ -557,7 +583,7 @@ const normalizedSettings = (): AccountInspectionSettings => ({
   batch_limit: clampNumber(form.batch_limit, 1, form.low_resource_mode ? 50 : 500, 50),
   concurrency: clampNumber(form.concurrency, 1, form.low_resource_mode ? 1 : 5, 1),
   batch_sleep_seconds: clampNumber(form.batch_sleep_seconds, form.low_resource_mode ? 30 : 1, 3600, 30),
-  recheck_after_hours: clampNumber(form.recheck_after_hours, 1, 2160, 168),
+  recheck_after_hours: clampNumber(form.recheck_after_hours, 0, 2160, 168),
   max_accounts_per_run: clampNumber(form.max_accounts_per_run, 1, 100000, 1000),
   auto_pause_consecutive_errors: clampNumber(form.auto_pause_consecutive_errors, 1, 100, 3),
   include_unschedulable: Boolean(form.include_unschedulable),
