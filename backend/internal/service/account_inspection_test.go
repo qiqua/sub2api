@@ -196,6 +196,31 @@ func TestDecideAccountInspectionActionRetainsUntilDeleteRuleMatures(t *testing.T
 	}
 }
 
+func TestDecideAccountInspectionActionDeletesOtherFailureWhenRuleEnabled(t *testing.T) {
+	settings := DefaultAccountInspectionSettings()
+	result := AccountInspectionResult{
+		Status:   AccountHealthStatusUnavailable,
+		Category: AccountHealthCategoryProxyError,
+	}
+
+	action, _ := DecideAccountInspectionAction(settings, result, AccountInspectionCandidate{}, time.Now())
+	if action != AccountInspectionActionNone {
+		t.Fatalf("default action = %q, want none", action)
+	}
+
+	settings.DeleteOtherFailure = true
+	settings.DeleteOtherFailureAfterHours = 0
+	settings.DeleteOtherFailureMinConsecutive = 1
+
+	action, patch := DecideAccountInspectionAction(settings, result, AccountInspectionCandidate{}, time.Now())
+	if action != AccountInspectionActionDelete {
+		t.Fatalf("enabled action = %q, want delete", action)
+	}
+	if patch.DeleteCandidateCategory != AccountHealthCategoryProxyError {
+		t.Fatalf("delete candidate category = %q, want %q", patch.DeleteCandidateCategory, AccountHealthCategoryProxyError)
+	}
+}
+
 func TestProcessCandidateDisablesQuotaAccountWhileWaitingForDeleteRule(t *testing.T) {
 	settings := DefaultAccountInspectionSettings()
 	settings.DeleteQuotaExhausted = true

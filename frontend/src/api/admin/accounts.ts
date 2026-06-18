@@ -513,6 +513,9 @@ export interface AccountInspectionSettings {
   delete_payment_required: boolean
   delete_payment_required_min_consecutive: number
   delete_payment_required_after_hours: number
+  delete_other_failure: boolean
+  delete_other_failure_min_consecutive: number
+  delete_other_failure_after_hours: number
   disable_quota_exhausted: boolean
   restore_auto_disabled: boolean
   cursor?: number

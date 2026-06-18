@@ -32,23 +32,25 @@ const (
 )
 
 const (
-	defaultAccountInspectionBatchLimit           = 50
-	defaultAccountInspectionConcurrency          = 1
-	defaultAccountInspectionBatchSleepSeconds    = 30
-	defaultAccountInspectionRecheckAfterHours    = 168
-	defaultAccountInspectionMaxAccountsPerRun    = 1000
-	defaultAccountInspectionAutoPauseErrors      = 3
-	defaultAccountInspectionDeleteMinConsecutive = 1
-	defaultAccountInspectionDeleteQuotaHours     = 168
-	defaultAccountInspectionDeletePaymentHours   = 168
-	defaultAccountInspectionLogRetention         = 1000
-	defaultAccountInspectionResultRetention      = 5000
-	maxAccountInspectionBatchLimit               = 500
-	maxAccountInspectionConcurrency              = 5
-	maxAccountInspectionBatchSleepSeconds        = 3600
-	maxAccountInspectionRecheckAfterHours        = 24 * 90
-	maxAccountInspectionMaxAccountsPerRun        = 100000
-	maxAccountInspectionAutoPauseErrors          = 100
+	defaultAccountInspectionBatchLimit             = 50
+	defaultAccountInspectionConcurrency            = 1
+	defaultAccountInspectionBatchSleepSeconds      = 30
+	defaultAccountInspectionRecheckAfterHours      = 168
+	defaultAccountInspectionMaxAccountsPerRun      = 1000
+	defaultAccountInspectionAutoPauseErrors        = 3
+	defaultAccountInspectionDeleteMinConsecutive   = 1
+	defaultAccountInspectionDeleteOtherConsecutive = 3
+	defaultAccountInspectionDeleteQuotaHours       = 168
+	defaultAccountInspectionDeletePaymentHours     = 168
+	defaultAccountInspectionDeleteOtherHours       = 168
+	defaultAccountInspectionLogRetention           = 1000
+	defaultAccountInspectionResultRetention        = 5000
+	maxAccountInspectionBatchLimit                 = 500
+	maxAccountInspectionConcurrency                = 5
+	maxAccountInspectionBatchSleepSeconds          = 3600
+	maxAccountInspectionRecheckAfterHours          = 24 * 90
+	maxAccountInspectionMaxAccountsPerRun          = 100000
+	maxAccountInspectionAutoPauseErrors            = 100
 )
 
 type AccountInspectionTester interface {
@@ -85,6 +87,9 @@ type AccountInspectionSettings struct {
 	DeletePaymentRequired               bool                     `json:"delete_payment_required"`
 	DeletePaymentRequiredMinConsecutive int                      `json:"delete_payment_required_min_consecutive"`
 	DeletePaymentRequiredAfterHours     int                      `json:"delete_payment_required_after_hours"`
+	DeleteOtherFailure                  bool                     `json:"delete_other_failure"`
+	DeleteOtherFailureMinConsecutive    int                      `json:"delete_other_failure_min_consecutive"`
+	DeleteOtherFailureAfterHours        int                      `json:"delete_other_failure_after_hours"`
 	DisableQuotaExhausted               bool                     `json:"disable_quota_exhausted"`
 	RestoreAutoDisabled                 bool                     `json:"restore_auto_disabled"`
 	Cursor                              int64                    `json:"cursor"`
@@ -774,6 +779,9 @@ func NormalizeAccountInspectionSettings(settings AccountInspectionSettings) Acco
 	if settings.DeletePaymentRequiredMinConsecutive <= 0 {
 		settings.DeletePaymentRequiredMinConsecutive = defaultAccountInspectionDeleteMinConsecutive
 	}
+	if settings.DeleteOtherFailureMinConsecutive <= 0 {
+		settings.DeleteOtherFailureMinConsecutive = defaultAccountInspectionDeleteOtherConsecutive
+	}
 	if settings.DeleteAuthInvalidAfterHours < 0 {
 		settings.DeleteAuthInvalidAfterHours = 0
 	}
@@ -782,6 +790,9 @@ func NormalizeAccountInspectionSettings(settings AccountInspectionSettings) Acco
 	}
 	if settings.DeletePaymentRequiredAfterHours < 0 {
 		settings.DeletePaymentRequiredAfterHours = defaultAccountInspectionDeletePaymentHours
+	}
+	if settings.DeleteOtherFailureAfterHours < 0 {
+		settings.DeleteOtherFailureAfterHours = defaultAccountInspectionDeleteOtherHours
 	}
 	if settings.LowResourceMode {
 		if settings.BatchLimit > 50 {
@@ -832,6 +843,9 @@ func DefaultAccountInspectionSettings() AccountInspectionSettings {
 		DeletePaymentRequired:               false,
 		DeletePaymentRequiredMinConsecutive: defaultAccountInspectionDeleteMinConsecutive,
 		DeletePaymentRequiredAfterHours:     defaultAccountInspectionDeletePaymentHours,
+		DeleteOtherFailure:                  false,
+		DeleteOtherFailureMinConsecutive:    defaultAccountInspectionDeleteOtherConsecutive,
+		DeleteOtherFailureAfterHours:        defaultAccountInspectionDeleteOtherHours,
 		DisableQuotaExhausted:               true,
 		RestoreAutoDisabled:                 true,
 	})
@@ -909,6 +923,13 @@ func accountInspectionDeleteRule(settings AccountInspectionSettings, result Acco
 			afterHours:     settings.DeletePaymentRequiredAfterHours,
 		}, true
 	}
+	if settings.DeleteOtherFailure && isDeletableOtherFailure(result) {
+		return accountInspectionDeletionRule{
+			category:       result.Category,
+			minConsecutive: settings.DeleteOtherFailureMinConsecutive,
+			afterHours:     settings.DeleteOtherFailureAfterHours,
+		}, true
+	}
 	return accountInspectionDeletionRule{}, false
 }
 
@@ -934,6 +955,24 @@ func isDeletableAuthInvalid(result AccountInspectionResult) bool {
 	}
 	lower := strings.ToLower(result.Message)
 	return strings.Contains(lower, "invalid refresh token") || strings.Contains(lower, "refresh token expired")
+}
+
+func isDeletableOtherFailure(result AccountInspectionResult) bool {
+	if result.Status != AccountHealthStatusUnavailable {
+		return false
+	}
+	switch result.Category {
+	case AccountHealthCategoryAvailable,
+		AccountHealthCategoryRateLimited,
+		AccountHealthCategoryQuotaExhausted,
+		AccountHealthCategoryPaymentRequired,
+		AccountHealthCategoryUnknownError:
+		return false
+	case AccountHealthCategoryAuthInvalid:
+		return !isDeletableAuthInvalid(result)
+	default:
+		return strings.TrimSpace(result.Category) != ""
+	}
 }
 
 func isAccountInspectionActiveStatus(status string) bool {

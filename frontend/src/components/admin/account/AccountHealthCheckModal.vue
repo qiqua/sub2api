@@ -135,7 +135,7 @@
           <div class="mt-4">
             <div class="panel-title">删除规则</div>
             <div class="panel-subtitle">可配置“连续扫出几次 + 保留观察多久”才删除；未到规则前会显示保留或待删除。</div>
-            <div class="mt-3 grid gap-3 xl:grid-cols-3">
+            <div class="mt-3 grid gap-3 xl:grid-cols-4">
               <div class="rule-card">
                 <label class="toggle-row rule-toggle">
                   <input v-model="form.delete_auth_invalid" type="checkbox" :disabled="running" />
@@ -192,6 +192,26 @@
                   <label class="field">
                     <span>保留小时</span>
                     <input v-model.number="form.delete_payment_required_after_hours" type="number" min="0" max="2160" :disabled="running || !form.delete_payment_required" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="rule-card">
+                <label class="toggle-row rule-toggle">
+                  <input v-model="form.delete_other_failure" type="checkbox" :disabled="running" />
+                  <span>
+                    <strong>其它失败</strong>
+                    <small>默认不删除。可能包含代理、上游、模型或配置错误，确认后再开启。</small>
+                  </span>
+                </label>
+                <div class="rule-fields">
+                  <label class="field">
+                    <span>连续次数</span>
+                    <input v-model.number="form.delete_other_failure_min_consecutive" type="number" min="1" max="20" :disabled="running || !form.delete_other_failure" />
+                  </label>
+                  <label class="field">
+                    <span>保留小时</span>
+                    <input v-model.number="form.delete_other_failure_after_hours" type="number" min="0" max="2160" :disabled="running || !form.delete_other_failure" />
                   </label>
                 </div>
               </div>
@@ -342,6 +362,9 @@ const form = reactive<AccountInspectionSettings>({
   delete_payment_required: false,
   delete_payment_required_min_consecutive: 1,
   delete_payment_required_after_hours: 168,
+  delete_other_failure: false,
+  delete_other_failure_min_consecutive: 3,
+  delete_other_failure_after_hours: 168,
   disable_quota_exhausted: true,
   restore_auto_disabled: true,
   cursor: 0
@@ -596,6 +619,9 @@ const normalizedSettings = (): AccountInspectionSettings => ({
   delete_payment_required: Boolean(form.delete_payment_required),
   delete_payment_required_min_consecutive: clampNumber(form.delete_payment_required_min_consecutive, 1, 20, 1),
   delete_payment_required_after_hours: clampNumber(form.delete_payment_required_after_hours, 0, 2160, 168),
+  delete_other_failure: Boolean(form.delete_other_failure),
+  delete_other_failure_min_consecutive: clampNumber(form.delete_other_failure_min_consecutive, 1, 20, 3),
+  delete_other_failure_after_hours: clampNumber(form.delete_other_failure_after_hours, 0, 2160, 168),
   disable_quota_exhausted: Boolean(form.disable_quota_exhausted),
   restore_auto_disabled: Boolean(form.restore_auto_disabled),
   cursor: Number(form.cursor || 0)
