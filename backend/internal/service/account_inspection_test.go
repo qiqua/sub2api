@@ -432,6 +432,43 @@ func TestAccountInspectionProcessBatchStopsDispatchingAfterCancel(t *testing.T) 
 	}
 }
 
+func TestGetStatusStopsOrphanedActiveRun(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Minute)
+	repo := &scriptedAccountInspectionRepository{
+		settings: DefaultAccountInspectionSettings(),
+		latestRun: &AccountInspectionRun{
+			ID:            7,
+			Status:        AccountInspectionRunStopping,
+			TotalAccounts: 10,
+			StartedAt:     &startedAt,
+			CreatedAt:     startedAt,
+			UpdatedAt:     startedAt,
+		},
+	}
+	svc := NewAccountInspectionService(repo, noopAdminService{}, &successInspectionTester{}, nil)
+
+	status, err := svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus returned error: %v", err)
+	}
+
+	if status.Running {
+		t.Fatal("status should not report an orphaned stopping run as running")
+	}
+	if status.Run == nil {
+		t.Fatal("status run is nil")
+	}
+	if status.Run.Status != AccountInspectionRunStopped {
+		t.Fatalf("run status = %q, want %q", status.Run.Status, AccountInspectionRunStopped)
+	}
+	if status.Run.FinishedAt == nil {
+		t.Fatal("finished_at should be set when orphaned run is stopped")
+	}
+	if len(repo.updates) != 1 {
+		t.Fatalf("UpdateRun calls = %d, want 1", len(repo.updates))
+	}
+}
+
 type blockingInspectionTester struct {
 	calls   atomic.Int32
 	started chan struct{}
@@ -593,6 +630,9 @@ func (r *scriptedAccountInspectionRepository) ListCandidates(context.Context, Ac
 func (r *scriptedAccountInspectionRepository) UpdateRun(_ context.Context, run *AccountInspectionRun) error {
 	cp := *run
 	r.updates = append(r.updates, &cp)
+	if r.latestRun != nil && r.latestRun.ID == run.ID {
+		r.latestRun = &cp
+	}
 	return nil
 }
 

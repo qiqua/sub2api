@@ -307,6 +307,7 @@ func (s *AccountInspectionService) GetStatus(ctx context.Context) (AccountInspec
 	if err != nil {
 		return AccountInspectionStatus{}, err
 	}
+	run = s.reconcileOrphanedActiveRun(ctx, run)
 
 	runID := int64(0)
 	total := int64(0)
@@ -425,7 +426,11 @@ func (s *AccountInspectionService) StopRun(ctx context.Context) (*AccountInspect
 			_ = s.repo.UpdateRun(ctx, run)
 		}
 	}
-	return s.repo.GetLatestRun(ctx)
+	run, err := s.repo.GetLatestRun(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.reconcileOrphanedActiveRun(ctx, run), nil
 }
 
 func (s *AccountInspectionService) run(ctx context.Context, run *AccountInspectionRun) {
@@ -713,6 +718,29 @@ func (s *AccountInspectionService) finishRun(ctx context.Context, run *AccountIn
 	if err := s.repo.UpdateRun(ctx, run); err != nil {
 		slog.Warn("account_inspection.finish_run_failed", "run_id", run.ID, "error", err)
 	}
+}
+
+func (s *AccountInspectionService) reconcileOrphanedActiveRun(ctx context.Context, run *AccountInspectionRun) *AccountInspectionRun {
+	if s == nil || s.repo == nil || run == nil || !isAccountInspectionActiveStatus(run.Status) {
+		return run
+	}
+
+	s.mu.Lock()
+	isCurrentRun := s.runningID == run.ID && s.cancel != nil
+	s.mu.Unlock()
+	if isCurrentRun {
+		return run
+	}
+
+	now := time.Now()
+	run.Status = AccountInspectionRunStopped
+	run.Error = "stopped because no active inspection worker was found"
+	run.FinishedAt = &now
+	run.UpdatedAt = now
+	if err := s.repo.UpdateRun(ctx, run); err != nil {
+		slog.Warn("account_inspection.reconcile_orphaned_run_failed", "run_id", run.ID, "error", err)
+	}
+	return run
 }
 
 func (s *AccountInspectionService) log(ctx context.Context, runID int64, level, message string) {
