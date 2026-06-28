@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
+    <div class="app-page-scroll space-y-6">
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <LoadingSpinner />
@@ -217,7 +217,7 @@
         </div>
 
         <!-- Charts Section -->
-        <div class="space-y-6">
+        <div class="app-page-scroll space-y-6">
           <!-- Date Range Filter -->
           <div class="card p-4">
             <div class="flex flex-wrap items-center gap-4">

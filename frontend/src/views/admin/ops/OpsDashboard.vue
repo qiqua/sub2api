@@ -1,6 +1,6 @@
 <template>
-  <component :is="isFullscreen ? 'div' : AppLayout" :class="isFullscreen ? 'flex min-h-screen flex-col justify-center bg-gray-50 dark:bg-dark-950' : ''">
-    <div :class="[isFullscreen ? 'p-4 md:p-6' : '', 'space-y-6 pb-12']">
+  <component :is="isFullscreen ? 'div' : AppLayout" :class="isFullscreen ? 'flex h-[100dvh] overflow-hidden bg-gray-50 dark:bg-dark-950' : ''">
+    <div :class="[isFullscreen ? 'h-full p-4 md:p-6' : 'app-page-fixed', 'flex min-h-0 flex-col gap-6']">
       <div
         v-if="errorMessage"
         class="rounded-2xl bg-red-50 p-4 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400"
@@ -12,6 +12,7 @@
 
       <OpsDashboardHeader
         v-else-if="opsEnabled"
+        class="shrink-0"
         :overview="overview"
         :platform="platform"
         :group-id="groupId"
@@ -39,69 +40,73 @@
         @exit-fullscreen="exitFullscreen"
       />
 
-      <!-- Row: Concurrency + Throughput -->
-      <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 lg:grid-cols-4">
-        <div class="lg:col-span-1 min-h-[360px]">
-          <OpsConcurrencyCard :platform-filter="platform" :group-id-filter="groupId" :refresh-token="dashboardRefreshToken" />
+      <div
+        v-if="opsEnabled && !(loading && !hasLoadedOnce)"
+        class="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain pb-12 pr-1"
+      >
+        <!-- Row: Concurrency + Throughput -->
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-4">
+          <div class="lg:col-span-1 min-h-[360px]">
+            <OpsConcurrencyCard :platform-filter="platform" :group-id-filter="groupId" :refresh-token="dashboardRefreshToken" />
+          </div>
+          <div class="lg:col-span-1 h-[360px]">
+            <OpsSwitchRateTrendChart
+              :points="switchTrend?.points ?? []"
+              :loading="loadingSwitchTrend"
+              :time-range="switchTrendTimeRange"
+              :fullscreen="isFullscreen"
+            />
+          </div>
+          <div class="lg:col-span-2 h-[360px]">
+            <OpsThroughputTrendChart
+              :points="throughputTrend?.points ?? []"
+              :by-platform="throughputTrend?.by_platform ?? []"
+              :top-groups="throughputTrend?.top_groups ?? []"
+              :loading="loadingTrend"
+              :time-range="timeRange"
+              :fullscreen="isFullscreen"
+              @select-platform="handleThroughputSelectPlatform"
+              @select-group="handleThroughputSelectGroup"
+              @open-details="handleOpenRequestDetails"
+            />
+          </div>
         </div>
-        <div class="lg:col-span-1 h-[360px]">
-          <OpsSwitchRateTrendChart
-            :points="switchTrend?.points ?? []"
-            :loading="loadingSwitchTrend"
-            :time-range="switchTrendTimeRange"
-            :fullscreen="isFullscreen"
+
+        <!-- Row: Visual Analysis (baseline 3-up grid) -->
+        <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
+          <OpsLatencyChart :latency-data="latencyHistogram" :loading="loadingLatency" />
+          <OpsErrorDistributionChart
+            :data="errorDistribution"
+            :loading="loadingErrorDistribution"
+            @open-details="openErrorDetails('request')"
           />
-        </div>
-        <div class="lg:col-span-2 h-[360px]">
-          <OpsThroughputTrendChart
-            :points="throughputTrend?.points ?? []"
-            :by-platform="throughputTrend?.by_platform ?? []"
-            :top-groups="throughputTrend?.top_groups ?? []"
-            :loading="loadingTrend"
+          <OpsErrorTrendChart
+            :points="errorTrend?.points ?? []"
+            :loading="loadingErrorTrend"
             :time-range="timeRange"
-            :fullscreen="isFullscreen"
-            @select-platform="handleThroughputSelectPlatform"
-            @select-group="handleThroughputSelectGroup"
-            @open-details="handleOpenRequestDetails"
+            @open-request-errors="openErrorDetails('request')"
+            @open-upstream-errors="openErrorDetails('upstream')"
           />
         </div>
-      </div>
 
-      <!-- Row: Visual Analysis (baseline 3-up grid) -->
-      <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6 md:grid-cols-3">
-        <OpsLatencyChart :latency-data="latencyHistogram" :loading="loadingLatency" />
-        <OpsErrorDistributionChart
-          :data="errorDistribution"
-          :loading="loadingErrorDistribution"
-          @open-details="openErrorDetails('request')"
-        />
-        <OpsErrorTrendChart
-          :points="errorTrend?.points ?? []"
-          :loading="loadingErrorTrend"
-          :time-range="timeRange"
-          @open-request-errors="openErrorDetails('request')"
-          @open-upstream-errors="openErrorDetails('upstream')"
-        />
-      </div>
+        <!-- Row: OpenAI Token Stats -->
+        <div v-if="showOpenAITokenStats" class="grid grid-cols-1 gap-6">
+          <OpsOpenAITokenStatsCard
+            :platform-filter="platform"
+            :group-id-filter="groupId"
+            :refresh-token="dashboardRefreshToken"
+          />
+        </div>
 
-      <!-- Row: OpenAI Token Stats -->
-      <div v-if="opsEnabled && showOpenAITokenStats && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6">
-        <OpsOpenAITokenStatsCard
+        <!-- Alert Events -->
+        <OpsAlertEventsCard v-if="showAlertEvents" />
+
+        <!-- System Logs -->
+        <OpsSystemLogTable
           :platform-filter="platform"
-          :group-id-filter="groupId"
           :refresh-token="dashboardRefreshToken"
         />
       </div>
-
-      <!-- Alert Events -->
-      <OpsAlertEventsCard v-if="opsEnabled && showAlertEvents && !(loading && !hasLoadedOnce)" />
-
-      <!-- System Logs -->
-      <OpsSystemLogTable
-        v-if="opsEnabled && !(loading && !hasLoadedOnce)"
-        :platform-filter="platform"
-        :refresh-token="dashboardRefreshToken"
-      />
 
       <!-- Settings Dialog (hidden in fullscreen mode) -->
       <template v-if="!isFullscreen">

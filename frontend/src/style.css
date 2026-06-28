@@ -755,6 +755,15 @@
   }
 
   /* 安全区域 */
+  .app-page-scroll {
+    @apply h-full min-h-0 overflow-y-auto overscroll-contain;
+    scrollbar-gutter: stable;
+  }
+
+  .app-page-fixed {
+    @apply h-full min-h-0 overflow-hidden;
+  }
+
   .safe-top {
     padding-top: env(safe-area-inset-top);
   }

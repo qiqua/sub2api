@@ -9,11 +9,12 @@ const appLayoutSource = readFileSync(resolve(testDir, '../AppLayout.vue'), 'utf8
 const tablePageLayoutSource = readFileSync(resolve(testDir, '../TablePageLayout.vue'), 'utf8')
 
 describe('AppLayout scroll containment', () => {
-  it('pins the authenticated shell to the viewport and keeps scrolling inside content areas', () => {
+  it('pins the authenticated shell to the viewport without making the outer main area scroll', () => {
     expect(appLayoutSource).toContain('h-[100dvh]')
     expect(appLayoutSource).toContain('overflow-hidden bg-gray-50')
     expect(appLayoutSource).toContain('flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden')
-    expect(appLayoutSource).toContain('min-h-0 flex-1 overflow-y-auto')
+    expect(appLayoutSource).toContain('min-h-0 flex-1 overflow-hidden')
+    expect(appLayoutSource).not.toContain('overflow-y-auto p-4')
   })
 })
 

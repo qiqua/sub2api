@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <div class="custom-page-layout">
+    <div class="app-page-fixed custom-page-layout">
       <div class="card flex-1 min-h-0 overflow-hidden">
         <div v-if="loading" class="flex h-full items-center justify-center py-12">
           <div
@@ -375,7 +375,6 @@ onUnmounted(() => {
 <style scoped>
 .custom-page-layout {
   @apply flex flex-col;
-  height: calc(100vh - 64px - 4rem);
 }
 
 .toc-sidebar {
