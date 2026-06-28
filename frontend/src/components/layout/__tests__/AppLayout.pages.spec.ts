@@ -33,4 +33,18 @@ describe('AppLayout page scroll ownership', () => {
 
     expect(offenders).toEqual([])
   })
+
+  it('prevents nested page-level scroll containers inside a single AppLayout view', () => {
+    const offenders = collectVueFiles(viewsDir)
+      .filter((file) => {
+        const source = readFileSync(file, 'utf8')
+        if (!source.includes('AppLayout')) return false
+        if (source.includes('<TablePageLayout')) return false
+        const ownerCount = source.match(/app-page-(?:scroll|fixed)/g)?.length ?? 0
+        return ownerCount !== 1
+      })
+      .map((file) => relative(viewsDir, file))
+
+    expect(offenders).toEqual([])
+  })
 })

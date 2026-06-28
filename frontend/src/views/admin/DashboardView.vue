@@ -217,7 +217,7 @@
         </div>
 
         <!-- Charts Section -->
-        <div class="app-page-scroll space-y-6">
+        <div class="space-y-6">
           <!-- Date Range Filter -->
           <div class="card p-4">
             <div class="flex flex-wrap items-center gap-4">

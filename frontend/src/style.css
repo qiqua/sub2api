@@ -756,7 +756,7 @@
 
   /* 安全区域 */
   .app-page-scroll {
-    @apply h-full min-h-0 overflow-y-auto overscroll-contain;
+    @apply h-full min-h-0 overflow-y-auto overscroll-contain pb-8;
     scrollbar-gutter: stable;
   }
 
