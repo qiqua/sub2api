@@ -119,6 +119,7 @@ func TestClassifyAccountHealthCheckError(t *testing.T) {
 			wantStatus: AccountHealthStatusRateLimited,
 			wantCat:    AccountHealthCategoryRateLimited,
 			wantHTTP:   429,
+			wantCode:   "rate_limit_exceeded",
 		},
 		{
 			name:       "401 response is auth invalid",

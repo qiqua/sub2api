@@ -56,14 +56,14 @@ var (
 )
 
 type AccountHealthCheckJobRequest struct {
-	AccountIDs             []int64                   `json:"account_ids"`
-	Filters                *BulkUpdateAccountFilters `json:"filters"`
-	ModelID                string                    `json:"model_id"`
-	Model                  string                    `json:"model"`
-	Concurrency            int                       `json:"concurrency"`
-	Limit                  int                       `json:"limit"`
-	Cursor                 int64                     `json:"cursor"`
-	IncludeUnschedulable   *bool                     `json:"include_unschedulable"`
+	AccountIDs           []int64                   `json:"account_ids"`
+	Filters              *BulkUpdateAccountFilters `json:"filters"`
+	ModelID              string                    `json:"model_id"`
+	Model                string                    `json:"model"`
+	Concurrency          int                       `json:"concurrency"`
+	Limit                int                       `json:"limit"`
+	Cursor               int64                     `json:"cursor"`
+	IncludeUnschedulable *bool                     `json:"include_unschedulable"`
 }
 
 type AccountHealthCheckSummary struct {
