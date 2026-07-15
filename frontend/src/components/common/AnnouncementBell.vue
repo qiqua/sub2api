@@ -320,6 +320,7 @@ import DOMPurify from 'dompurify'
 import { useAppStore } from '@/stores/app'
 import { useAnnouncementStore } from '@/stores/announcements'
 import { formatRelativeTime, formatRelativeWithDateTime } from '@/utils/format'
+import { acquireBodyScrollLock, releaseBodyScrollLock } from '@/composables/useBodyScrollLock'
 import type { UserAnnouncement } from '@/types'
 import Icon from '@/components/icons/Icon.vue'
 
@@ -341,6 +342,7 @@ const unreadCount = computed(() => announcementStore.unreadCount)
 const isModalOpen = ref(false)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<UserAnnouncement | null>(null)
+const bodyScrollLockToken = Symbol('AnnouncementBell')
 
 // Methods
 function renderMarkdown(content: string): string {
@@ -409,14 +411,19 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleEscape)
-  document.body.style.overflow = ''
+  releaseBodyScrollLock(bodyScrollLockToken)
 })
 
 watch(
   [isModalOpen, detailModalOpen, () => announcementStore.currentPopup],
   ([modal, detail, popup]) => {
-    document.body.style.overflow = (modal || detail || popup) ? 'hidden' : ''
-  }
+    if (modal || detail || popup) {
+      acquireBodyScrollLock(bodyScrollLockToken)
+    } else {
+      releaseBodyScrollLock(bodyScrollLockToken)
+    }
+  },
+  { immediate: true }
 )
 </script>
 
