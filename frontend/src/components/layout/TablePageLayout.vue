@@ -80,7 +80,8 @@ onUnmounted(() => {
 }
 
 .table-page-layout.mobile-mode {
-  @apply h-auto overflow-visible;
+  @apply h-full overflow-y-auto overflow-x-hidden pb-4;
+  scrollbar-gutter: stable;
 }
 
 .table-page-layout.mobile-mode .table-scroll-container {
@@ -88,16 +89,16 @@ onUnmounted(() => {
 }
 
 .table-page-layout.mobile-mode .layout-section-scrollable {
-  @apply flex-none min-h-fit;
+  @apply flex-none min-h-fit overflow-visible;
 }
 
 .table-page-layout.mobile-mode .table-scroll-container :deep(.table-wrapper) {
-  @apply overflow-visible;
+  @apply overflow-x-auto overflow-y-visible;
 }
 
 .table-page-layout.mobile-mode .table-scroll-container :deep(table) {
   @apply flex-none;
   display: table;
-  min-width: 100%;
+  min-width: max-content;
 }
 </style>

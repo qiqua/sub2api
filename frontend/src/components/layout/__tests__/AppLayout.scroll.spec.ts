@@ -22,7 +22,7 @@ describe('TablePageLayout scroll containment', () => {
   it('fills the AppLayout main area instead of creating a page-level vertical scroll', () => {
     expect(tablePageLayoutSource).toContain('@apply flex h-full min-h-0 flex-col gap-6 overflow-hidden;')
     expect(tablePageLayoutSource).toContain('@apply flex-1 min-h-0 flex flex-col overflow-hidden;')
-    expect(tablePageLayoutSource).toContain('@apply h-auto overflow-visible;')
+    expect(tablePageLayoutSource).toContain('@apply h-full overflow-y-auto overflow-x-hidden pb-4;')
     expect(tablePageLayoutSource).not.toContain('calc(100vh')
   })
 })
