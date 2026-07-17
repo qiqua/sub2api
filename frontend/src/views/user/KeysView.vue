@@ -138,6 +138,7 @@
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="openGroupSelector(row)"
+                data-test="group-selector-trigger"
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="t('keys.clickToChangeGroup')"
               >
@@ -1145,7 +1146,7 @@
       <div
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
-        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max min-w-[380px] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
+        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-[420px] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important;"
         :style="{
           top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
@@ -1169,42 +1170,132 @@
           </div>
         </div>
         <!-- Group list -->
-        <div class="max-h-80 overflow-y-auto p-1.5">
-          <button
-            v-for="option in filteredGroupOptions"
-            :key="option.value ?? 'null'"
-            @click="changeGroup(selectedKeyForGroup!, option.value)"
-            :class="[
-              'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
-              'border-b border-gray-100 last:border-0 dark:border-dark-700',
-              selectedKeyForGroup?.group_id === option.value ||
-              (!selectedKeyForGroup?.group_id && option.value === null)
-                ? 'bg-primary-50 dark:bg-primary-900/20'
-                : 'hover:bg-gray-100 dark:hover:bg-dark-700'
-            ]"
-            :title="option.description || undefined"
-          >
-            <GroupOptionItem
-              :name="option.label"
-              :platform="option.platform"
-              :subscription-type="option.subscriptionType"
-              :rate-multiplier="option.rate"
-              :user-rate-multiplier="option.userRate"
-              :peak-rate-enabled="option.peakRateEnabled"
-              :peak-start="option.peakStart"
-              :peak-end="option.peakEnd"
-              :peak-rate-multiplier="option.peakRateMultiplier"
-              :description="option.description"
-              :selected="
-                selectedKeyForGroup?.group_id === option.value ||
-                (!selectedKeyForGroup?.group_id && option.value === null)
-              "
-            />
-          </button>
+        <div class="max-h-[26rem] overflow-y-auto p-2">
+          <div class="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+            {{ t('keys.primaryGroupLabel') }}
+          </div>
+          <div class="space-y-1">
+            <button
+              v-for="option in filteredGroupOptions"
+              :key="option.value ?? 'null'"
+              type="button"
+              data-test="quick-primary-group"
+              @click="selectQuickPrimaryGroup(option.value)"
+              :class="[
+                'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
+                quickGroupPrimaryID === option.value
+                  ? 'bg-primary-50 dark:bg-primary-900/20'
+                  : 'hover:bg-gray-100 dark:hover:bg-dark-700'
+              ]"
+              :title="option.description || undefined"
+            >
+              <GroupOptionItem
+                :name="option.label"
+                :platform="option.platform"
+                :subscription-type="option.subscriptionType"
+                :rate-multiplier="option.rate"
+                :user-rate-multiplier="option.userRate"
+                :peak-rate-enabled="option.peakRateEnabled"
+                :peak-start="option.peakStart"
+                :peak-end="option.peakEnd"
+                :peak-rate-multiplier="option.peakRateMultiplier"
+                :description="option.description"
+                :selected="quickGroupPrimaryID === option.value"
+              />
+            </button>
+          </div>
           <!-- Empty state when search has no results -->
           <div v-if="filteredGroupOptions.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
             {{ t('keys.noGroupFound') }}
           </div>
+
+          <div v-if="quickGroupPrimaryID !== null" class="mt-3 rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/40">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-sm font-medium text-gray-900 dark:text-white">
+                  {{ t('keys.autoRouting.title') }}
+                </div>
+                <p class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                  {{ t('keys.autoRouting.candidateHint') }}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-test="quick-auto-routing-toggle"
+                @click="toggleQuickAutoRouting"
+                :disabled="quickAutoRouteCandidateOptions.length === 0"
+                :class="[
+                  'relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                  quickAutoRouteCandidateOptions.length === 0
+                    ? 'cursor-not-allowed bg-gray-200 opacity-60 dark:bg-dark-600'
+                    : 'cursor-pointer',
+                  quickGroupAutoRoutingEnabled && quickAutoRouteCandidateOptions.length > 0
+                    ? 'bg-primary-600'
+                    : 'bg-gray-200 dark:bg-dark-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                    quickGroupAutoRoutingEnabled && quickAutoRouteCandidateOptions.length > 0 ? 'translate-x-5' : 'translate-x-0'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div v-if="quickGroupAutoRoutingEnabled" class="mt-3 space-y-1">
+              <button
+                v-for="option in quickAutoRouteCandidateOptions"
+                :key="option.value"
+                type="button"
+                data-test="quick-auto-route-candidate"
+                class="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white dark:hover:bg-dark-700"
+                :aria-pressed="isQuickAutoRouteGroupSelected(option.value)"
+                @click="toggleQuickAutoRouteGroup(option.value)"
+              >
+                <span
+                  :class="[
+                    'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border transition-colors',
+                    isQuickAutoRouteGroupSelected(option.value)
+                      ? 'border-primary-500 bg-primary-500 text-white'
+                      : 'border-gray-300 bg-white text-transparent dark:border-dark-500 dark:bg-dark-800'
+                  ]"
+                >
+                  <Icon name="check" size="xs" :stroke-width="2.5" />
+                </span>
+                <GroupOptionItem
+                  :name="option.label"
+                  :platform="option.platform"
+                  :subscription-type="option.subscriptionType"
+                  :rate-multiplier="option.rate"
+                  :user-rate-multiplier="option.userRate"
+                  :peak-rate-enabled="option.peakRateEnabled"
+                  :peak-start="option.peakStart"
+                  :peak-end="option.peakEnd"
+                  :peak-rate-multiplier="option.peakRateMultiplier"
+                  :description="option.description"
+                  :selected="isQuickAutoRouteGroupSelected(option.value)"
+                />
+              </button>
+              <p v-if="quickAutoRouteCandidateOptions.length === 0" class="py-2 text-xs text-amber-600 dark:text-amber-400">
+                {{ t('keys.autoRouting.noCandidates') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 p-2 dark:border-dark-700 dark:bg-dark-900/50">
+          <button type="button" class="btn btn-secondary btn-sm" @click="closeQuickGroupSelector">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            data-test="quick-group-save"
+            class="btn btn-primary btn-sm"
+            @click="saveQuickGroupSelector"
+          >
+            {{ t('common.save') }}
+          </button>
         </div>
       </div>
     </Teleport>
@@ -1401,6 +1492,9 @@ const pendingCcsRow = ref<ApiKey | null>(null)
 const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
+const quickGroupPrimaryID = ref<number | null>(null)
+const quickGroupAutoRoutingEnabled = ref(false)
+const quickGroupAutoRouteGroupIDs = ref<number[]>([])
 const publicSettings = ref<PublicSettings | null>(null)
 const dropdownRef = ref<HTMLElement | null>(null)
 const columnDropdownRef = ref<HTMLElement | null>(null)
@@ -1530,13 +1624,31 @@ const selectedPrimaryGroup = computed(() => {
   return groups.value.find((group) => group.id === id) ?? null
 })
 
+const candidateGroupsForPrimaryID = (primaryID: number | null) => {
+  if (primaryID === null) return []
+  const primary = groups.value.find((group) => group.id === primaryID)
+  if (!primary) return []
+  return groups.value.filter((group) => group.id !== primary.id && group.platform === primary.platform)
+}
+
+const sanitizeAutoRouteIDs = (primaryID: number | null, ids: number[]) => {
+  const allowed = new Set(candidateGroupsForPrimaryID(primaryID).map((group) => group.id))
+  const deduped: number[] = []
+  for (const id of ids) {
+    const numericID = Number(id)
+    if (!Number.isFinite(numericID) || !allowed.has(numericID) || deduped.includes(numericID)) {
+      continue
+    }
+    deduped.push(numericID)
+  }
+  return deduped
+}
+
 // Convert groups to Select options format with rate multiplier and subscription type
 const groupOptions = computed(() => groups.value.map(toGroupOption))
 
 const autoRouteCandidateGroups = computed(() => {
-  const primary = selectedPrimaryGroup.value
-  if (!primary) return []
-  return groups.value.filter((group) => group.id !== primary.id && group.platform === primary.platform)
+  return candidateGroupsForPrimaryID(selectedPrimaryGroup.value?.id ?? null)
 })
 
 const autoRouteCandidateOptions = computed(() => autoRouteCandidateGroups.value.map(toGroupOption))
@@ -1547,16 +1659,10 @@ const isAutoRoutedKey = (key: ApiKey) =>
 const isAutoRouteGroupSelected = (groupID: number) => formData.value.auto_route_group_ids.includes(groupID)
 
 const sanitizeAutoRouteGroupSelection = () => {
-  const allowed = new Set(autoRouteCandidateGroups.value.map((group) => group.id))
-  const deduped: number[] = []
-  for (const id of formData.value.auto_route_group_ids) {
-    const numericID = Number(id)
-    if (!Number.isFinite(numericID) || !allowed.has(numericID) || deduped.includes(numericID)) {
-      continue
-    }
-    deduped.push(numericID)
-  }
-  formData.value.auto_route_group_ids = deduped
+  formData.value.auto_route_group_ids = sanitizeAutoRouteIDs(
+    selectedPrimaryGroup.value?.id ?? null,
+    formData.value.auto_route_group_ids,
+  )
   if (!selectedPrimaryGroup.value || autoRouteCandidateGroups.value.length === 0) {
     formData.value.enable_auto_routing = false
   }
@@ -1603,6 +1709,57 @@ const filteredGroupOptions = computed(() => {
       (opt.description && opt.description.toLowerCase().includes(query))
   })
 })
+
+const quickAutoRouteCandidateOptions = computed(() => {
+  const candidates = candidateGroupsForPrimaryID(quickGroupPrimaryID.value).map(toGroupOption)
+  const query = groupSearchQuery.value.trim().toLowerCase()
+  if (!query) return candidates
+  return candidates.filter((opt) => {
+    return opt.label.toLowerCase().includes(query) ||
+      (opt.description && opt.description.toLowerCase().includes(query))
+  })
+})
+
+const sanitizeQuickAutoRouteSelection = () => {
+  quickGroupAutoRouteGroupIDs.value = sanitizeAutoRouteIDs(
+    quickGroupPrimaryID.value,
+    quickGroupAutoRouteGroupIDs.value,
+  )
+  if (candidateGroupsForPrimaryID(quickGroupPrimaryID.value).length === 0) {
+    quickGroupAutoRoutingEnabled.value = false
+  }
+}
+
+const isQuickAutoRouteGroupSelected = (groupID: number) => quickGroupAutoRouteGroupIDs.value.includes(groupID)
+
+const toggleQuickAutoRouteGroup = (groupID: number) => {
+  const selected = new Set(quickGroupAutoRouteGroupIDs.value)
+  if (selected.has(groupID)) {
+    selected.delete(groupID)
+  } else {
+    selected.add(groupID)
+  }
+  quickGroupAutoRouteGroupIDs.value = [...selected]
+  sanitizeQuickAutoRouteSelection()
+}
+
+const toggleQuickAutoRouting = () => {
+  if (candidateGroupsForPrimaryID(quickGroupPrimaryID.value).length === 0) {
+    appStore.showError(t('keys.autoRouting.noCandidates'))
+    return
+  }
+  quickGroupAutoRoutingEnabled.value = !quickGroupAutoRoutingEnabled.value
+  if (!quickGroupAutoRoutingEnabled.value) {
+    quickGroupAutoRouteGroupIDs.value = []
+  } else {
+    sanitizeQuickAutoRouteSelection()
+  }
+}
+
+const selectQuickPrimaryGroup = (groupID: number) => {
+  quickGroupPrimaryID.value = groupID
+  sanitizeQuickAutoRouteSelection()
+}
 
 const copyToClipboard = async (text: string, keyId: number) => {
   const success = await clipboardCopy(text, t('keys.copied'))
@@ -1769,43 +1926,79 @@ const toggleKeyStatus = async (key: ApiKey) => {
 
 const openGroupSelector = (key: ApiKey) => {
   if (groupSelectorKeyId.value === key.id) {
-    groupSelectorKeyId.value = null
-    dropdownPosition.value = null
+    closeQuickGroupSelector()
   } else {
     const buttonEl = groupButtonRefs.value.get(key.id)
     if (buttonEl) {
       const rect = buttonEl.getBoundingClientRect()
-      const dropdownEstHeight = 400 // estimated max dropdown height
+      const dropdownEstHeight = 520 // estimated max dropdown height
+      const dropdownWidth = 420
       const spaceBelow = window.innerHeight - rect.bottom
       const spaceAbove = rect.top
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - dropdownWidth - 8))
 
       if (spaceBelow < dropdownEstHeight && spaceAbove > spaceBelow) {
         // Not enough space below, pop upward
         dropdownPosition.value = {
           bottom: window.innerHeight - rect.top + 4,
-          left: rect.left
+          left
         }
       } else {
         // Default: pop downward
         dropdownPosition.value = {
           top: rect.bottom + 4,
-          left: rect.left
+          left
         }
       }
     }
     groupSelectorKeyId.value = key.id
+    quickGroupPrimaryID.value = key.group_id
+    quickGroupAutoRoutingEnabled.value = key.routing_mode === 'auto'
+    quickGroupAutoRouteGroupIDs.value = [...(key.auto_route_group_ids || [])]
+    sanitizeQuickAutoRouteSelection()
     groupSearchQuery.value = ''
   }
 }
 
-const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
+const closeQuickGroupSelector = () => {
   groupSelectorKeyId.value = null
   dropdownPosition.value = null
-  if (key.group_id === newGroupId) return
+  quickGroupPrimaryID.value = null
+  quickGroupAutoRoutingEnabled.value = false
+  quickGroupAutoRouteGroupIDs.value = []
+  groupSearchQuery.value = ''
+}
+
+const saveQuickGroupSelector = async () => {
+  const key = selectedKeyForGroup.value
+  if (!key || quickGroupPrimaryID.value === null) {
+    appStore.showError(t('keys.groupRequired'))
+    return
+  }
+  sanitizeQuickAutoRouteSelection()
+  if (quickGroupAutoRoutingEnabled.value && quickGroupAutoRouteGroupIDs.value.length === 0) {
+    appStore.showError(t('keys.autoRouting.groupRequired'))
+    return
+  }
+
+  const routingMode = quickGroupAutoRoutingEnabled.value ? 'auto' : 'fixed'
+  const autoRouteGroupIDs = quickGroupAutoRoutingEnabled.value ? [...quickGroupAutoRouteGroupIDs.value] : []
+  const unchanged = key.group_id === quickGroupPrimaryID.value &&
+    key.routing_mode === routingMode &&
+    JSON.stringify(key.auto_route_group_ids || []) === JSON.stringify(autoRouteGroupIDs)
+  if (unchanged) {
+    closeQuickGroupSelector()
+    return
+  }
 
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    await keysAPI.update(key.id, {
+      group_id: quickGroupPrimaryID.value,
+      routing_mode: routingMode,
+      auto_route_group_ids: autoRouteGroupIDs,
+    })
     appStore.showSuccess(t('keys.groupChangedSuccess'))
+    closeQuickGroupSelector()
     loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToChangeGroup'))
@@ -1816,8 +2009,7 @@ const closeGroupSelector = (event: MouseEvent) => {
   const target = event.target as HTMLElement
   // Check if click is inside the dropdown or the trigger button
   if (!target.closest('.group\\/dropdown') && !dropdownRef.value?.contains(target)) {
-    groupSelectorKeyId.value = null
-    dropdownPosition.value = null
+    closeQuickGroupSelector()
   }
   if (columnDropdownRef.value && !columnDropdownRef.value.contains(target)) {
     showColumnDropdown.value = false

@@ -577,4 +577,47 @@ describe('user KeysView column settings', () => {
       })
     )
   })
+
+  it('configures multi-group routing from the inline group selector', async () => {
+    const primaryGroup = createGroup(10, 'OpenAI A', 'openai')
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        id: 3,
+        name: 'inline key',
+        group_id: 10,
+        group: primaryGroup,
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getAvailableGroups.mockResolvedValue([
+      primaryGroup,
+      createGroup(11, 'OpenAI B', 'openai'),
+      createGroup(12, 'Claude A', 'anthropic'),
+    ])
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="group-selector-trigger"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.findAll('[data-test="quick-primary-group"]')).toHaveLength(3)
+
+    await wrapper.get('[data-test="quick-auto-routing-toggle"]').trigger('click')
+    await nextTick()
+    const candidates = wrapper.findAll('[data-test="quick-auto-route-candidate"]')
+    expect(candidates).toHaveLength(1)
+    await candidates[0].trigger('click')
+
+    await wrapper.get('[data-test="quick-group-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateKeyRequest).toHaveBeenCalledWith(3, {
+      group_id: 10,
+      routing_mode: 'auto',
+      auto_route_group_ids: [11],
+    })
+  })
 })
