@@ -105,6 +105,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 
 	reqLog = reqLog.With(zap.String("model", requestModel))
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, requestModel)
 	setOpsRequestContext(c, requestModel, false)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
 
@@ -274,7 +275,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					return
 				}
 				if failoverErr.ShouldReportAccountScheduleFailure() {
-					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(requestModel), false, nil)
+					h.gatewayService.ReportOpenAIAccountScheduleResultEx(account.ID, account.GetMappedModel(requestModel), service.OpenAIAccountScheduleReport{Success: false, StatusCode: failoverErr.StatusCode})
 				}
 				if c.Writer.Size() != writerSizeBeforeForward {
 					h.handleFailoverExhausted(c, failoverErr, true)

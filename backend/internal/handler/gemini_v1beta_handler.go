@@ -45,6 +45,9 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		googleError(c, http.StatusBadRequest, "API key group platform is not gemini")
 		return
 	}
+	if !hasForcePlatform {
+		apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, "")
+	}
 
 	// 强制 antigravity 模式：返回 antigravity 支持的模型列表
 	if forcePlatform == service.PlatformAntigravity {
@@ -97,6 +100,9 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	if modelName == "" {
 		googleError(c, http.StatusBadRequest, "Missing model in URL")
 		return
+	}
+	if !hasForcePlatform {
+		apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, modelName)
 	}
 
 	// 强制 antigravity 模式：返回 antigravity 模型信息
@@ -169,6 +175,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	stream := action == "streamGenerateContent"
 	reqLog = reqLog.With(zap.String("model", modelName), zap.String("action", action), zap.Bool("stream", stream))
+	if !middleware.HasForcePlatform(c) {
+		apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, modelName)
+	}
 
 	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {

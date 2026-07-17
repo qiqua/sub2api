@@ -78,6 +78,8 @@ type OpenAIAccountScheduleRequest struct {
 	PreviousResponseCanMove bool
 	UseUpstreamTokenCost    bool
 	RequestedModel          string
+	RequestBodyBytes        int
+	LargeContextTier        string
 	RequiredTransport       OpenAIUpstreamTransport
 	RequiredCapability      OpenAIEndpointCapability
 	RequiredImageCapability OpenAIImagesCapability
@@ -116,6 +118,16 @@ type OpenAIAccountScheduler interface {
 	ReportResult(accountID int64, success bool, firstTokenMs *int)
 	ReportSwitch()
 	SnapshotMetrics() OpenAIAccountSchedulerMetricsSnapshot
+}
+
+// OpenAIAccountScheduleReport is the extensible result payload used by the
+// auto-health learner. Existing callers can keep using ReportResult; newer
+// paths may pass status/error kind without changing request contents.
+type OpenAIAccountScheduleReport struct {
+	Success      bool
+	FirstTokenMs *int
+	StatusCode   int
+	FailureKind  string
 }
 
 type openAIAccountSchedulerMetrics struct {
@@ -181,8 +193,21 @@ type openAIAccountRuntimeStats struct {
 }
 
 type openAIAccountRuntimeStat struct {
-	errorRateEWMABits atomic.Uint64
-	ttftEWMABits      atomic.Uint64
+	errorRateEWMABits   atomic.Uint64
+	ttftEWMABits        atomic.Uint64
+	consecutiveFailures atomic.Int64
+	consecutiveSlow     atomic.Int64
+}
+
+type openAIAccountAutoHealthDecision struct {
+	blockUntil          time.Time
+	durableUntil        time.Time
+	reason              string
+	durableReason       string
+	statusCode          int
+	failureKind         string
+	consecutiveFailures int64
+	consecutiveSlow     int64
 }
 
 func newOpenAIAccountRuntimeStats() *openAIAccountRuntimeStats {
@@ -222,21 +247,31 @@ func updateEWMAAtomic(target *atomic.Uint64, sample float64, alpha float64) {
 	}
 }
 
-func (s *openAIAccountRuntimeStats) report(accountID int64, success bool, firstTokenMs *int) {
+func (s *openAIAccountRuntimeStats) report(accountID int64, success bool, firstTokenMs *int) openAIAccountAutoHealthDecision {
+	return s.reportWithHealth(accountID, OpenAIAccountScheduleReport{
+		Success:      success,
+		FirstTokenMs: firstTokenMs,
+	}, defaultOpenAIAccountAutoHealthConfig())
+}
+
+func (s *openAIAccountRuntimeStats) reportWithHealth(accountID int64, report OpenAIAccountScheduleReport, health openAIAccountAutoHealthConfig) openAIAccountAutoHealthDecision {
 	if s == nil || accountID <= 0 {
-		return
+		return openAIAccountAutoHealthDecision{}
 	}
 	const alpha = 0.2
 	stat := s.loadOrCreate(accountID)
 
 	errorSample := 1.0
-	if success {
+	if report.Success {
 		errorSample = 0.0
 	}
 	updateEWMAAtomic(&stat.errorRateEWMABits, errorSample, alpha)
+	decision := openAIAccountAutoHealthDecision{}
+	decision.statusCode = report.StatusCode
+	decision.failureKind = openAIAccountScheduleFailureKind(report)
 
-	if firstTokenMs != nil && *firstTokenMs > 0 {
-		ttft := float64(*firstTokenMs)
+	if report.FirstTokenMs != nil && *report.FirstTokenMs > 0 {
+		ttft := float64(*report.FirstTokenMs)
 		ttftBits := math.Float64bits(ttft)
 		for {
 			oldBits := stat.ttftEWMABits.Load()
@@ -253,6 +288,116 @@ func (s *openAIAccountRuntimeStats) report(accountID int64, success bool, firstT
 			}
 		}
 	}
+
+	if health.slowTTFTMs <= 0 {
+		health = defaultOpenAIAccountAutoHealthConfig()
+	}
+	if report.Success {
+		stat.consecutiveFailures.Store(0)
+		if report.FirstTokenMs != nil && *report.FirstTokenMs >= health.slowTTFTMs {
+			slow := stat.consecutiveSlow.Add(1)
+			decision.consecutiveSlow = slow
+			if health.enabled && int64(health.slowConsecutive) > 0 && slow >= int64(health.slowConsecutive) {
+				decision.blockUntil = time.Now().Add(openAIAccountAutoHealthCooldown(slow, int64(health.slowConsecutive), health.cooldown, health.maxCooldown))
+				decision.reason = "auto_health_slow_ttft"
+				if health.durableTempDisableEnabled && int64(health.durableSlowConsecutive) > 0 && slow >= int64(health.durableSlowConsecutive) {
+					decision.durableUntil = time.Now().Add(openAIAccountAutoHealthCooldown(slow, int64(health.durableSlowConsecutive), health.durableCooldown, health.durableMaxCooldown))
+					decision.durableReason = "auto_health_slow_ttft_durable"
+				}
+			}
+		} else {
+			stat.consecutiveSlow.Store(0)
+		}
+		return decision
+	}
+
+	failures := stat.consecutiveFailures.Add(1)
+	stat.consecutiveSlow.Store(0)
+	decision.consecutiveFailures = failures
+	if health.enabled && int64(health.failureConsecutive) > 0 && failures >= int64(health.failureConsecutive) {
+		decision.blockUntil = time.Now().Add(openAIAccountAutoHealthCooldown(failures, int64(health.failureConsecutive), health.cooldown, health.maxCooldown))
+		decision.reason = "auto_health_failures"
+		if decision.failureKind != "" {
+			decision.reason += "_" + decision.failureKind
+		}
+		if health.durableTempDisableEnabled && int64(health.durableFailureConsecutive) > 0 && failures >= int64(health.durableFailureConsecutive) {
+			decision.durableUntil = time.Now().Add(openAIAccountAutoHealthCooldown(failures, int64(health.durableFailureConsecutive), health.durableCooldown, health.durableMaxCooldown))
+			decision.durableReason = "auto_health_failures_durable"
+			if decision.failureKind != "" {
+				decision.durableReason += "_" + decision.failureKind
+			}
+		}
+	}
+	return decision
+}
+
+func openAIAccountAutoHealthCooldown(streak int64, threshold int64, base time.Duration, max time.Duration) time.Duration {
+	if base <= 0 {
+		base = 5 * time.Minute
+	}
+	if max <= 0 || max < base {
+		max = base
+	}
+	if threshold <= 0 || streak <= threshold {
+		return base
+	}
+	multiplier := 1 + int((streak-threshold)/threshold)
+	if multiplier < 1 {
+		multiplier = 1
+	}
+	if multiplier > 16 {
+		multiplier = 16
+	}
+	cooldown := time.Duration(multiplier) * base
+	if cooldown > max {
+		return max
+	}
+	return cooldown
+}
+
+func openAIAccountScheduleFailureKind(report OpenAIAccountScheduleReport) string {
+	if kind := sanitizeOpenAIAccountScheduleFailureKind(report.FailureKind); kind != "" {
+		return kind
+	}
+	switch report.StatusCode {
+	case 401, 403:
+		return "auth"
+	case 408:
+		return "timeout"
+	case 429:
+		return "rate_limit"
+	case 499:
+		return "client_disconnect"
+	case 500, 502, 503, 504, 520, 521, 522, 523, 524:
+		return "transient"
+	default:
+		if report.StatusCode > 0 {
+			return "upstream_error"
+		}
+	}
+	return ""
+}
+
+func sanitizeOpenAIAccountScheduleFailureKind(kind string) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range kind {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		if r == '_' || r == '-' || r == '.' {
+			b.WriteRune('_')
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteRune('_')
+		}
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 func (s *openAIAccountRuntimeStats) snapshot(accountID int64) (errorRate float64, ttft float64, hasTTFT bool) {
@@ -355,6 +500,36 @@ type openAIStickyEscapeConfig struct {
 	errorRate float64
 }
 
+type openAIAccountAutoHealthConfig struct {
+	enabled                   bool
+	slowTTFTMs                int
+	slowConsecutive           int
+	failureConsecutive        int
+	cooldown                  time.Duration
+	maxCooldown               time.Duration
+	durableTempDisableEnabled bool
+	durableFailureConsecutive int
+	durableSlowConsecutive    int
+	durableCooldown           time.Duration
+	durableMaxCooldown        time.Duration
+}
+
+func defaultOpenAIAccountAutoHealthConfig() openAIAccountAutoHealthConfig {
+	return openAIAccountAutoHealthConfig{
+		enabled:                   true,
+		slowTTFTMs:                60000,
+		slowConsecutive:           3,
+		failureConsecutive:        3,
+		cooldown:                  5 * time.Minute,
+		maxCooldown:               30 * time.Minute,
+		durableTempDisableEnabled: true,
+		durableFailureConsecutive: 6,
+		durableSlowConsecutive:    5,
+		durableCooldown:           15 * time.Minute,
+		durableMaxCooldown:        time.Hour,
+	}
+}
+
 func newDefaultOpenAIAccountScheduler(service *OpenAIGatewayService, stats *openAIAccountRuntimeStats) OpenAIAccountScheduler {
 	if stats == nil {
 		stats = newOpenAIAccountRuntimeStats()
@@ -375,6 +550,15 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		decision.LatencyMs = time.Since(start).Milliseconds()
 		s.metrics.recordSelect(decision)
 	}()
+	if info, ok := OpenAILargeContextInfoFromContext(ctx); ok {
+		if req.RequestBodyBytes <= 0 {
+			req.RequestBodyBytes = info.BodyBytes
+		}
+		if strings.TrimSpace(req.LargeContextTier) == "" {
+			req.LargeContextTier = info.Tier
+		}
+	}
+	req.LargeContextTier = NormalizeOpenAILargeContextTier(req.LargeContextTier)
 
 	previousResponseID := strings.TrimSpace(req.PreviousResponseID)
 	if previousResponseID != "" && normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
@@ -960,6 +1144,11 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			weights.Reset*resetFactor +
 			weights.QuotaHeadroom*quotaHeadroomFactor +
 			weights.UpstreamCost*(upstreamCostFactor-openAIUpstreamCostNeutralFactor)
+		var largeContextCfg *config.Config
+		if s != nil && s.service != nil {
+			largeContextCfg = s.service.cfg
+		}
+		item.score += openAILargeContextScoreAdjustment(largeContextCfg, req, item.account)
 		if req.StickyWeighted {
 			if req.PreviousResponseCanMove && req.StickyPreviousAccountID > 0 && item.account.ID == req.StickyPreviousAccountID {
 				item.score += weights.Previous
@@ -1637,10 +1826,64 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 }
 
 func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, success bool, firstTokenMs *int) {
+	s.ReportScheduleResult(accountID, OpenAIAccountScheduleReport{
+		Success:      success,
+		FirstTokenMs: firstTokenMs,
+	})
+}
+
+func (s *defaultOpenAIAccountScheduler) ReportScheduleResult(accountID int64, report OpenAIAccountScheduleReport) {
 	if s == nil || s.stats == nil {
 		return
 	}
-	s.stats.report(accountID, success, firstTokenMs)
+	health := defaultOpenAIAccountAutoHealthConfig()
+	if s.service != nil {
+		health = s.service.openAIAccountAutoHealthConfig()
+	}
+	decision := s.stats.reportWithHealth(accountID, report, health)
+	if s.service == nil || accountID <= 0 {
+		return
+	}
+	if report.Success && decision.blockUntil.IsZero() && decision.durableUntil.IsZero() {
+		return
+	}
+	if !decision.blockUntil.IsZero() {
+		s.service.BlockAccountSchedulingByID(accountID, decision.blockUntil, decision.reason)
+		slog.Warn("openai.account_auto_health_blocked",
+			"account_id", accountID,
+			"reason", decision.reason,
+			"status_code", decision.statusCode,
+			"failure_kind", decision.failureKind,
+			"block_until", decision.blockUntil,
+			"consecutive_failures", decision.consecutiveFailures,
+			"consecutive_slow", decision.consecutiveSlow,
+		)
+	}
+	if !decision.durableUntil.IsZero() && s.service.accountRepo != nil {
+		ctx, cancel := openAIAccountStateContext(context.Background())
+		err := s.service.accountRepo.SetTempUnschedulable(ctx, accountID, decision.durableUntil, decision.durableReason)
+		cancel()
+		if err != nil {
+			slog.Warn("openai.account_auto_health_durable_block_failed",
+				"account_id", accountID,
+				"reason", decision.durableReason,
+				"status_code", decision.statusCode,
+				"failure_kind", decision.failureKind,
+				"durable_until", decision.durableUntil,
+				"err", err,
+			)
+			return
+		}
+		slog.Warn("openai.account_auto_health_durable_blocked",
+			"account_id", accountID,
+			"reason", decision.durableReason,
+			"status_code", decision.statusCode,
+			"failure_kind", decision.failureKind,
+			"durable_until", decision.durableUntil,
+			"consecutive_failures", decision.consecutiveFailures,
+			"consecutive_slow", decision.consecutiveSlow,
+		)
+	}
 }
 
 func (s *defaultOpenAIAccountScheduler) ReportSwitch() {
@@ -2112,14 +2355,27 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 }
 
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, model string, success bool, firstTokenMs *int) {
-	if success {
+	s.ReportOpenAIAccountScheduleResultEx(accountID, model, OpenAIAccountScheduleReport{
+		Success:      success,
+		FirstTokenMs: firstTokenMs,
+	})
+}
+
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResultEx(accountID int64, model string, report OpenAIAccountScheduleReport) {
+	if report.Success {
 		s.clearOpenAIAccountModelTransientState(accountID, normalizeOpenAIAccountModelTransientModel(model))
 	}
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {
 		return
 	}
-	scheduler.ReportResult(accountID, success, firstTokenMs)
+	if reporter, ok := scheduler.(interface {
+		ReportScheduleResult(accountID int64, report OpenAIAccountScheduleReport)
+	}); ok {
+		reporter.ReportScheduleResult(accountID, report)
+		return
+	}
+	scheduler.ReportResult(accountID, report.Success, report.FirstTokenMs)
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {
@@ -2195,6 +2451,63 @@ func (s *OpenAIGatewayService) openAIStickyEscapeConfig() openAIStickyEscapeConf
 		ttftMs:    15000,
 		errorRate: 0.5,
 	}
+}
+
+func (s *OpenAIGatewayService) openAIAccountAutoHealthConfig() openAIAccountAutoHealthConfig {
+	defaults := defaultOpenAIAccountAutoHealthConfig()
+	if s == nil || s.cfg == nil {
+		return defaults
+	}
+	cfg := s.cfg.Gateway.OpenAIScheduler.AutoHealth
+	if !cfg.Enabled &&
+		cfg.SlowTTFTMs == 0 &&
+		cfg.SlowConsecutive == 0 &&
+		cfg.FailureConsecutive == 0 &&
+		cfg.CooldownSeconds == 0 &&
+		cfg.MaxCooldownSeconds == 0 &&
+		!cfg.DurableTempDisableEnabled &&
+		cfg.DurableFailureConsecutive == 0 &&
+		cfg.DurableSlowConsecutive == 0 &&
+		cfg.DurableCooldownSeconds == 0 &&
+		cfg.DurableMaxCooldownSeconds == 0 {
+		return defaults
+	}
+	if cfg.SlowTTFTMs > 0 {
+		defaults.slowTTFTMs = cfg.SlowTTFTMs
+	}
+	if cfg.SlowConsecutive > 0 {
+		defaults.slowConsecutive = cfg.SlowConsecutive
+	}
+	if cfg.FailureConsecutive > 0 {
+		defaults.failureConsecutive = cfg.FailureConsecutive
+	}
+	if cfg.CooldownSeconds > 0 {
+		defaults.cooldown = time.Duration(cfg.CooldownSeconds) * time.Second
+	}
+	if cfg.MaxCooldownSeconds > 0 {
+		defaults.maxCooldown = time.Duration(cfg.MaxCooldownSeconds) * time.Second
+	}
+	if defaults.maxCooldown < defaults.cooldown {
+		defaults.maxCooldown = defaults.cooldown
+	}
+	defaults.enabled = cfg.Enabled
+	if cfg.DurableFailureConsecutive > 0 {
+		defaults.durableFailureConsecutive = cfg.DurableFailureConsecutive
+	}
+	if cfg.DurableSlowConsecutive > 0 {
+		defaults.durableSlowConsecutive = cfg.DurableSlowConsecutive
+	}
+	if cfg.DurableCooldownSeconds > 0 {
+		defaults.durableCooldown = time.Duration(cfg.DurableCooldownSeconds) * time.Second
+	}
+	if cfg.DurableMaxCooldownSeconds > 0 {
+		defaults.durableMaxCooldown = time.Duration(cfg.DurableMaxCooldownSeconds) * time.Second
+	}
+	if defaults.durableMaxCooldown < defaults.durableCooldown {
+		defaults.durableMaxCooldown = defaults.durableCooldown
+	}
+	defaults.durableTempDisableEnabled = cfg.DurableTempDisableEnabled
+	return defaults
 }
 
 func (s *OpenAIGatewayService) openAIWSSchedulerWeights() GatewayOpenAIWSSchedulerScoreWeightsView {

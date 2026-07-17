@@ -72,6 +72,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	}
 	reqModel := modelResult.String()
 	reqLog = reqLog.With(zap.String("model", reqModel))
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel)
 	setOpsRequestContext(c, reqModel, false)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
 

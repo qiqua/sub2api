@@ -826,6 +826,10 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	}
 
 	result := &AdminUpdateAPIKeyGroupIDResult{}
+	// 分组锚点变化时先回到 fixed，避免保留旧平台的 auto_route_group_ids。
+	// 如果请求同时提交 routing_mode/auto_route_group_ids，handler 会在本次分组更新后再次写入新路由配置。
+	apiKey.RoutingMode = APIKeyRoutingModeFixed
+	apiKey.AutoRouteGroupIDs = []int64{}
 
 	if *groupID == 0 {
 		// 0 表示解绑分组（不修改 user_allowed_groups，避免影响用户其他 Key）
@@ -933,6 +937,65 @@ func (s *adminServiceImpl) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 	}
 	if s.billingCacheService != nil {
 		_ = s.billingCacheService.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
+	}
+	return apiKey, nil
+}
+
+// AdminUpdateAPIKeyRouting updates API key automatic group routing fields.
+func (s *adminServiceImpl) AdminUpdateAPIKeyRouting(ctx context.Context, keyID int64, routingMode *string, autoRouteGroupIDs *[]int64) (*APIKey, error) {
+	apiKey, err := s.apiKeyRepo.GetByID(ctx, keyID)
+	if err != nil {
+		return nil, err
+	}
+	if routingMode == nil && autoRouteGroupIDs == nil {
+		return apiKey, nil
+	}
+
+	mode := apiKey.RoutingMode
+	if routingMode != nil {
+		mode = *routingMode
+	}
+	normalizedMode := NormalizeAPIKeyRoutingMode(mode)
+	if normalizedMode == "" {
+		return nil, ErrAPIKeyInvalidRoutingMode
+	}
+	ids := apiKey.AutoRouteGroupIDs
+	if autoRouteGroupIDs != nil {
+		ids = *autoRouteGroupIDs
+	}
+	ids = NormalizeAPIKeyAutoRouteGroupIDs(ids)
+	if normalizedMode == APIKeyRoutingModeFixed {
+		apiKey.RoutingMode = APIKeyRoutingModeFixed
+		apiKey.AutoRouteGroupIDs = []int64{}
+	} else {
+		if apiKey.GroupID == nil || *apiKey.GroupID <= 0 {
+			return nil, ErrAPIKeyAutoRouteNoGroup
+		}
+		primaryGroup, err := s.groupRepo.GetByID(ctx, *apiKey.GroupID)
+		if err != nil {
+			return nil, err
+		}
+		if primaryGroup == nil || !primaryGroup.IsActive() {
+			return nil, ErrAPIKeyAutoRouteGroup
+		}
+		for _, id := range ids {
+			group, err := s.groupRepo.GetByID(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if group == nil || !group.IsActive() || group.Platform != primaryGroup.Platform {
+				return nil, ErrAPIKeyAutoRouteGroup
+			}
+		}
+		apiKey.RoutingMode = APIKeyRoutingModeAuto
+		apiKey.AutoRouteGroupIDs = ids
+	}
+
+	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
+		return nil, fmt.Errorf("update api key routing: %w", err)
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	}
 	return apiKey, nil
 }

@@ -138,7 +138,17 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 	mu := s.openAIAccountRuntimeBlockLock(account.ID)
 	mu.Lock()
 	defer mu.Unlock()
-	_, _ = s.blockAccountSchedulingLocked(account, until, reason)
+	_, _ = s.blockAccountIDSchedulingLocked(account.ID, until, reason)
+}
+
+func (s *OpenAIGatewayService) BlockAccountSchedulingByID(accountID int64, until time.Time, reason string) {
+	if s == nil || accountID <= 0 {
+		return
+	}
+	mu := s.openAIAccountRuntimeBlockLock(accountID)
+	mu.Lock()
+	defer mu.Unlock()
+	_, _ = s.blockAccountIDSchedulingLocked(accountID, until, reason)
 }
 
 func (s *OpenAIGatewayService) openAIAccountRuntimeBlockLock(accountID int64) *sync.Mutex {
@@ -151,9 +161,9 @@ func (s *OpenAIGatewayService) openAIAccountRuntimeBlockLock(accountID int64) *s
 	return mu
 }
 
-func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, until time.Time, _ string) (uint64, bool) {
+func (s *OpenAIGatewayService) blockAccountIDSchedulingLocked(accountID int64, until time.Time, _ string) (uint64, bool) {
 	generation := s.openaiAccountRuntimeBlockSequence.Add(1)
-	s.openaiAccountRuntimeBlockGeneration.Store(account.ID, generation)
+	s.openaiAccountRuntimeBlockGeneration.Store(accountID, generation)
 	now := time.Now()
 	blockUntil := until
 	if blockUntil.IsZero() || !blockUntil.After(now) {
@@ -161,9 +171,9 @@ func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, un
 	}
 
 	for {
-		current, loaded := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
+		current, loaded := s.openaiAccountRuntimeBlockUntil.Load(accountID)
 		if !loaded {
-			actual, stored := s.openaiAccountRuntimeBlockUntil.LoadOrStore(account.ID, blockUntil)
+			actual, stored := s.openaiAccountRuntimeBlockUntil.LoadOrStore(accountID, blockUntil)
 			if !stored {
 				return generation, true
 			}
@@ -172,7 +182,7 @@ func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, un
 
 		currentUntil, ok := current.(time.Time)
 		if !ok || currentUntil.IsZero() {
-			if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(account.ID, current, blockUntil) {
+			if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(accountID, current, blockUntil) {
 				return generation, true
 			}
 			continue
@@ -180,10 +190,17 @@ func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, un
 		if !blockUntil.After(currentUntil) {
 			return generation, false
 		}
-		if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(account.ID, current, blockUntil) {
+		if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(accountID, current, blockUntil) {
 			return generation, true
 		}
 	}
+}
+
+func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, until time.Time, reason string) (uint64, bool) {
+	if account == nil {
+		return 0, false
+	}
+	return s.blockAccountIDSchedulingLocked(account.ID, until, reason)
 }
 
 func (s *OpenAIGatewayService) ClearAccountSchedulingBlock(accountID int64) {

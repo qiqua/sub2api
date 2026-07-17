@@ -85,6 +85,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
+	reqLog = annotateOpenAILargeContextRequest(c, reqLog, h.cfg, "gateway.chat_completions", reqStream, body)
+
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel)
 
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))

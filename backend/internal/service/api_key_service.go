@@ -158,11 +158,13 @@ type APIKeyAuthCacheInvalidator interface {
 
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
-	Name        string   `json:"name"`
-	GroupID     *int64   `json:"group_id"`
-	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
-	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
-	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单
+	Name              string   `json:"name"`
+	GroupID           *int64   `json:"group_id"`
+	RoutingMode       string   `json:"routing_mode"`
+	AutoRouteGroupIDs []int64  `json:"auto_route_group_ids"`
+	CustomKey         *string  `json:"custom_key"`   // 可选的自定义key
+	IPWhitelist       []string `json:"ip_whitelist"` // IP 白名单
+	IPBlacklist       []string `json:"ip_blacklist"` // IP 黑名单
 
 	// Quota fields
 	Quota         float64 `json:"quota"`           // Quota limit in USD (0 = unlimited)
@@ -176,11 +178,13 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest 更新API Key请求
 type UpdateAPIKeyRequest struct {
-	Name        *string  `json:"name"`
-	GroupID     *int64   `json:"group_id"`
-	Status      *string  `json:"status"`
-	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单（空数组清空）
-	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单（空数组清空）
+	Name              *string  `json:"name"`
+	GroupID           *int64   `json:"group_id"`
+	RoutingMode       *string  `json:"routing_mode"`
+	AutoRouteGroupIDs *[]int64 `json:"auto_route_group_ids"`
+	Status            *string  `json:"status"`
+	IPWhitelist       []string `json:"ip_whitelist"` // IP 白名单（空数组清空）
+	IPBlacklist       []string `json:"ip_blacklist"` // IP 黑名单（空数组清空）
 
 	// Quota fields
 	Quota           *float64   `json:"quota"`       // Quota limit in USD (nil = no change, 0 = unlimited)
@@ -374,6 +378,11 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
+	routingMode, autoRouteGroupIDs, err := s.normalizeAndValidateAPIKeyRouting(ctx, user, req.GroupID, req.RoutingMode, req.AutoRouteGroupIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	var key string
 
 	// 判断是否使用自定义Key
@@ -411,18 +420,20 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 创建API Key记录
 	apiKey := &APIKey{
-		UserID:      userID,
-		Key:         key,
-		Name:        html.EscapeString(req.Name),
-		GroupID:     req.GroupID,
-		Status:      StatusActive,
-		IPWhitelist: req.IPWhitelist,
-		IPBlacklist: req.IPBlacklist,
-		Quota:       req.Quota,
-		QuotaUsed:   0,
-		RateLimit5h: req.RateLimit5h,
-		RateLimit1d: req.RateLimit1d,
-		RateLimit7d: req.RateLimit7d,
+		UserID:            userID,
+		Key:               key,
+		Name:              html.EscapeString(req.Name),
+		GroupID:           req.GroupID,
+		RoutingMode:       routingMode,
+		AutoRouteGroupIDs: autoRouteGroupIDs,
+		Status:            StatusActive,
+		IPWhitelist:       req.IPWhitelist,
+		IPBlacklist:       req.IPBlacklist,
+		Quota:             req.Quota,
+		QuotaUsed:         0,
+		RateLimit5h:       req.RateLimit5h,
+		RateLimit1d:       req.RateLimit1d,
+		RateLimit7d:       req.RateLimit7d,
 	}
 
 	// Set expiration time if specified
@@ -679,6 +690,12 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		}
 
 		apiKey.GroupID = req.GroupID
+		if req.AutoRouteGroupIDs == nil {
+			apiKey.AutoRouteGroupIDs = []int64{}
+		}
+		if req.RoutingMode == nil && req.AutoRouteGroupIDs == nil {
+			apiKey.RoutingMode = APIKeyRoutingModeFixed
+		}
 	}
 
 	if req.Status != nil {
@@ -740,6 +757,27 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		apiKey.Window5hStart = nil
 		apiKey.Window1dStart = nil
 		apiKey.Window7dStart = nil
+	}
+
+	if req.RoutingMode != nil || req.AutoRouteGroupIDs != nil || req.GroupID != nil {
+		routingMode := apiKey.RoutingMode
+		if req.RoutingMode != nil {
+			routingMode = *req.RoutingMode
+		}
+		autoRouteGroupIDs := apiKey.AutoRouteGroupIDs
+		if req.AutoRouteGroupIDs != nil {
+			autoRouteGroupIDs = *req.AutoRouteGroupIDs
+		}
+		user, err := s.userRepo.GetByID(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("get user: %w", err)
+		}
+		normalizedMode, normalizedAutoIDs, err := s.normalizeAndValidateAPIKeyRouting(ctx, user, apiKey.GroupID, routingMode, autoRouteGroupIDs)
+		if err != nil {
+			return nil, err
+		}
+		apiKey.RoutingMode = normalizedMode
+		apiKey.AutoRouteGroupIDs = normalizedAutoIDs
 	}
 
 	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {

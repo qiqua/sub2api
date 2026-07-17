@@ -120,6 +120,38 @@ func (_u *APIKeyUpdate) ClearGroupID() *APIKeyUpdate {
 	return _u
 }
 
+// SetRoutingMode sets the "routing_mode" field.
+func (_u *APIKeyUpdate) SetRoutingMode(v string) *APIKeyUpdate {
+	_u.mutation.SetRoutingMode(v)
+	return _u
+}
+
+// SetNillableRoutingMode sets the "routing_mode" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableRoutingMode(v *string) *APIKeyUpdate {
+	if v != nil {
+		_u.SetRoutingMode(*v)
+	}
+	return _u
+}
+
+// SetAutoRouteGroupIds sets the "auto_route_group_ids" field.
+func (_u *APIKeyUpdate) SetAutoRouteGroupIds(v []int64) *APIKeyUpdate {
+	_u.mutation.SetAutoRouteGroupIds(v)
+	return _u
+}
+
+// AppendAutoRouteGroupIds appends value to the "auto_route_group_ids" field.
+func (_u *APIKeyUpdate) AppendAutoRouteGroupIds(v []int64) *APIKeyUpdate {
+	_u.mutation.AppendAutoRouteGroupIds(v)
+	return _u
+}
+
+// ClearAutoRouteGroupIds clears the value of the "auto_route_group_ids" field.
+func (_u *APIKeyUpdate) ClearAutoRouteGroupIds() *APIKeyUpdate {
+	_u.mutation.ClearAutoRouteGroupIds()
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *APIKeyUpdate) SetStatus(v string) *APIKeyUpdate {
 	_u.mutation.SetStatus(v)
@@ -555,6 +587,11 @@ func (_u *APIKeyUpdate) check() error {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.RoutingMode(); ok {
+		if err := apikey.RoutingModeValidator(v); err != nil {
+			return &ValidationError{Name: "routing_mode", err: fmt.Errorf(`ent: validator failed for field "APIKey.routing_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
@@ -592,6 +629,20 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.RoutingMode(); ok {
+		_spec.SetField(apikey.FieldRoutingMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutoRouteGroupIds(); ok {
+		_spec.SetField(apikey.FieldAutoRouteGroupIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAutoRouteGroupIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, apikey.FieldAutoRouteGroupIds, value)
+		})
+	}
+	if _u.mutation.AutoRouteGroupIdsCleared() {
+		_spec.ClearField(apikey.FieldAutoRouteGroupIds, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
@@ -904,6 +955,38 @@ func (_u *APIKeyUpdateOne) SetNillableGroupID(v *int64) *APIKeyUpdateOne {
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *APIKeyUpdateOne) ClearGroupID() *APIKeyUpdateOne {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (_u *APIKeyUpdateOne) SetRoutingMode(v string) *APIKeyUpdateOne {
+	_u.mutation.SetRoutingMode(v)
+	return _u
+}
+
+// SetNillableRoutingMode sets the "routing_mode" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableRoutingMode(v *string) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetRoutingMode(*v)
+	}
+	return _u
+}
+
+// SetAutoRouteGroupIds sets the "auto_route_group_ids" field.
+func (_u *APIKeyUpdateOne) SetAutoRouteGroupIds(v []int64) *APIKeyUpdateOne {
+	_u.mutation.SetAutoRouteGroupIds(v)
+	return _u
+}
+
+// AppendAutoRouteGroupIds appends value to the "auto_route_group_ids" field.
+func (_u *APIKeyUpdateOne) AppendAutoRouteGroupIds(v []int64) *APIKeyUpdateOne {
+	_u.mutation.AppendAutoRouteGroupIds(v)
+	return _u
+}
+
+// ClearAutoRouteGroupIds clears the value of the "auto_route_group_ids" field.
+func (_u *APIKeyUpdateOne) ClearAutoRouteGroupIds() *APIKeyUpdateOne {
+	_u.mutation.ClearAutoRouteGroupIds()
 	return _u
 }
 
@@ -1355,6 +1438,11 @@ func (_u *APIKeyUpdateOne) check() error {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.RoutingMode(); ok {
+		if err := apikey.RoutingModeValidator(v); err != nil {
+			return &ValidationError{Name: "routing_mode", err: fmt.Errorf(`ent: validator failed for field "APIKey.routing_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
@@ -1409,6 +1497,20 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.RoutingMode(); ok {
+		_spec.SetField(apikey.FieldRoutingMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutoRouteGroupIds(); ok {
+		_spec.SetField(apikey.FieldAutoRouteGroupIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAutoRouteGroupIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, apikey.FieldAutoRouteGroupIds, value)
+		})
+	}
+	if _u.mutation.AutoRouteGroupIdsCleared() {
+		_spec.ClearField(apikey.FieldAutoRouteGroupIds, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)

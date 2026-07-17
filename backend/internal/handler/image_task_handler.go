@@ -59,10 +59,6 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "Images API is not supported for this platform")
 		return
 	}
-	if !service.GroupAllowsImageGeneration(apiKey.Group) {
-		imageTaskJSONError(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
-		return
-	}
 	if h == nil || h.tasks == nil || h.execute == nil {
 		imageTaskError(c, service.ErrImageTaskUnavailable)
 		return
@@ -83,6 +79,11 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	}
 	if asyncImageRequestStreams(c.GetHeader("Content-Type"), body) {
 		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "streaming image requests cannot be submitted as asynchronous tasks")
+		return
+	}
+	apiKey = h.applyAutoRouteForAsyncImage(c, apiKey, platform, body)
+	if !service.GroupAllowsImageGeneration(apiKey.Group) {
+		imageTaskJSONError(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
 	}
 	if err := h.validateRequest(c, platform, body); err != nil {
@@ -113,6 +114,21 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	})
 
 	go h.run(task.ID, platform, taskCtx, recorder, cancel)
+}
+
+func (h *AsyncImageHandler) applyAutoRouteForAsyncImage(c *gin.Context, apiKey *service.APIKey, platform string, body []byte) *service.APIKey {
+	if h == nil || h.openAI == nil || apiKey == nil {
+		return apiKey
+	}
+	requestModel := ""
+	if platform == service.PlatformGrok {
+		requestModel = service.ParseGrokMediaRequest(c.GetHeader("Content-Type"), body).Model
+	} else if h.openAI.gatewayService != nil {
+		if parsed, err := h.openAI.gatewayService.ParseOpenAIImagesRequest(c, body); err == nil {
+			requestModel = parsed.Model
+		}
+	}
+	return applyAPIKeyAutoRoute(c, h.openAI.apiKeyAutoRouter, nil, apiKey, requestModel, service.WithAPIKeyAutoRouteImageGenerationRequired())
 }
 
 func (h *AsyncImageHandler) Get(c *gin.Context) {

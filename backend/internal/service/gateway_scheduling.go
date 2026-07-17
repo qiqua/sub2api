@@ -443,6 +443,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					}
 				})
 				shuffleWithinSortGroups(routingAvailable)
+				sort.SliceStable(routingAvailable, func(i, j int) bool {
+					return compareOpenAILargeContextPoolPreference(ctx, s.cfg, routingAvailable[i].account, routingAvailable[j].account) < 0
+				})
 
 				// 4. 尝试获取槽位
 				for _, item := range routingAvailable {
@@ -691,6 +694,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 			// 3. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
+			sort.SliceStable(candidates, func(i, j int) bool {
+				return compareOpenAILargeContextPoolPreference(ctx, s.cfg, candidates[i].account, candidates[j].account) < 0
+			})
 			// 4. LRU 选择最久未用的账号
 			selected := selectByLRU(candidates, preferOAuth)
 			if selected == nil {
@@ -724,6 +730,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 	// ============ Layer 3: 兜底排队 ============
 	s.sortCandidatesForFallback(candidates, preferOAuth, cfg.FallbackSelectionMode)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return compareOpenAILargeContextPoolPreference(ctx, s.cfg, candidates[i], candidates[j]) < 0
+	})
 	for _, acc := range candidates {
 		// 会话数量限制检查（等待计划也需要占用会话配额）
 		if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
@@ -742,6 +751,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates []*Account, groupID *int64, sessionHash string, preferOAuth bool) (*AccountSelectionResult, bool, error) {
 	ordered := append([]*Account(nil), candidates...)
 	sortAccountsByPriorityAndLastUsed(ordered, preferOAuth)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return compareOpenAILargeContextPoolPreference(ctx, s.cfg, ordered[i], ordered[j]) < 0
+	})
 
 	for _, acc := range ordered {
 		result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency)

@@ -177,3 +177,21 @@ func TestGetAllGroupCapacityBatchKeepsEmptyGroupRows(t *testing.T) {
 		{GroupID: 20, ConcurrencyMax: 4},
 	}, results)
 }
+
+func TestGetGroupCapacitiesBatchUsesLoadFactorBeforeConcurrency(t *testing.T) {
+	loadFactor := 9
+	accountRepo := &groupCapacityAccountRepoStub{
+		rows: []GroupAccountCapacityRow{
+			{GroupID: 10, AccountID: 1, Concurrency: 2, LoadFactor: &loadFactor},
+			{GroupID: 10, AccountID: 2, Concurrency: 4},
+		},
+	}
+	svc := NewGroupCapacityService(accountRepo, &groupCapacityGroupRepoStub{}, nil, nil, nil)
+
+	results, err := svc.GetGroupCapacities(context.Background(), []int64{10})
+	require.NoError(t, err)
+
+	require.Equal(t, []GroupCapacitySummary{
+		{GroupID: 10, ConcurrencyMax: 13},
+	}, results)
+}

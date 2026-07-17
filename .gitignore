@@ -132,6 +132,9 @@ deploy/docker-compose.override.yml
 deploy/docker-compose.custom-image.yml
 deploy/backups/
 .gocache/
+.gomodcache/
+.gotmp/
+.tools/
 vite.config.js
 docs/*
 !docs/PAYMENT.md

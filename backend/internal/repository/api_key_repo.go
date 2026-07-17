@@ -35,16 +35,34 @@ func newAPIKeyRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *apiKeyR
 	return &apiKeyRepository{client: client, sql: sqlq}
 }
 
+func normalizeAPIKeyRoutingFields(key *service.APIKey) (string, []int64) {
+	if key == nil {
+		return service.APIKeyRoutingModeFixed, []int64{}
+	}
+	mode := service.NormalizeAPIKeyRoutingMode(key.RoutingMode)
+	if mode == "" {
+		mode = service.APIKeyRoutingModeFixed
+	}
+	ids := service.NormalizeAPIKeyAutoRouteGroupIDs(key.AutoRouteGroupIDs)
+	if mode == service.APIKeyRoutingModeFixed {
+		ids = []int64{}
+	}
+	return mode, ids
+}
+
 func (r *apiKeyRepository) activeQuery() *dbent.APIKeyQuery {
 	// 默认过滤已软删除记录，避免删除后仍被查询到。
 	return r.client.APIKey.Query().Where(apikey.DeletedAtIsNil())
 }
 
 func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) error {
+	routingMode, autoRouteGroupIDs := normalizeAPIKeyRoutingFields(key)
 	builder := r.client.APIKey.Create().
 		SetUserID(key.UserID).
 		SetKey(key.Key).
 		SetName(key.Name).
+		SetRoutingMode(routingMode).
+		SetAutoRouteGroupIds(autoRouteGroupIDs).
 		SetStatus(key.Status).
 		SetNillableGroupID(key.GroupID).
 		SetNillableLastUsedAt(key.LastUsedAt).
@@ -65,6 +83,8 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 	created, err := builder.Save(ctx)
 	if err == nil {
 		key.ID = created.ID
+		key.RoutingMode = routingMode
+		key.AutoRouteGroupIDs = autoRouteGroupIDs
 		key.LastUsedAt = created.LastUsedAt
 		key.CreatedAt = created.CreatedAt
 		key.UpdatedAt = created.UpdatedAt
@@ -133,6 +153,8 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			apikey.FieldUserID,
 			apikey.FieldGroupID,
 			apikey.FieldName,
+			apikey.FieldRoutingMode,
+			apikey.FieldAutoRouteGroupIds,
 			apikey.FieldStatus,
 			apikey.FieldIPWhitelist,
 			apikey.FieldIPBlacklist,
@@ -227,9 +249,12 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) erro
 	// 同时显式设置 updated_at，避免二次查询带来的并发可见性问题。
 	client := clientFromContext(ctx, r.client)
 	now := time.Now()
+	routingMode, autoRouteGroupIDs := normalizeAPIKeyRoutingFields(key)
 	builder := client.APIKey.Update().
 		Where(apikey.IDEQ(key.ID), apikey.DeletedAtIsNil()).
 		SetName(key.Name).
+		SetRoutingMode(routingMode).
+		SetAutoRouteGroupIds(autoRouteGroupIDs).
 		SetStatus(key.Status).
 		SetQuota(key.Quota).
 		SetQuotaUsed(key.QuotaUsed).
@@ -293,6 +318,8 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) erro
 
 	// 使用同一时间戳回填，避免并发删除导致二次查询失败。
 	key.UpdatedAt = now
+	key.RoutingMode = routingMode
+	key.AutoRouteGroupIDs = autoRouteGroupIDs
 	return nil
 }
 
@@ -837,29 +864,31 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		return nil
 	}
 	out := &service.APIKey{
-		ID:            m.ID,
-		UserID:        m.UserID,
-		Key:           m.Key,
-		Name:          m.Name,
-		Status:        m.Status,
-		IPWhitelist:   m.IPWhitelist,
-		IPBlacklist:   m.IPBlacklist,
-		LastUsedAt:    m.LastUsedAt,
-		CreatedAt:     m.CreatedAt,
-		UpdatedAt:     m.UpdatedAt,
-		GroupID:       m.GroupID,
-		Quota:         m.Quota,
-		QuotaUsed:     m.QuotaUsed,
-		ExpiresAt:     m.ExpiresAt,
-		RateLimit5h:   m.RateLimit5h,
-		RateLimit1d:   m.RateLimit1d,
-		RateLimit7d:   m.RateLimit7d,
-		Usage5h:       m.Usage5h,
-		Usage1d:       m.Usage1d,
-		Usage7d:       m.Usage7d,
-		Window5hStart: m.Window5hStart,
-		Window1dStart: m.Window1dStart,
-		Window7dStart: m.Window7dStart,
+		ID:                m.ID,
+		UserID:            m.UserID,
+		Key:               m.Key,
+		Name:              m.Name,
+		RoutingMode:       service.NormalizeAPIKeyRoutingMode(m.RoutingMode),
+		AutoRouteGroupIDs: service.NormalizeAPIKeyAutoRouteGroupIDs(m.AutoRouteGroupIds),
+		Status:            m.Status,
+		IPWhitelist:       m.IPWhitelist,
+		IPBlacklist:       m.IPBlacklist,
+		LastUsedAt:        m.LastUsedAt,
+		CreatedAt:         m.CreatedAt,
+		UpdatedAt:         m.UpdatedAt,
+		GroupID:           m.GroupID,
+		Quota:             m.Quota,
+		QuotaUsed:         m.QuotaUsed,
+		ExpiresAt:         m.ExpiresAt,
+		RateLimit5h:       m.RateLimit5h,
+		RateLimit1d:       m.RateLimit1d,
+		RateLimit7d:       m.RateLimit7d,
+		Usage5h:           m.Usage5h,
+		Usage1d:           m.Usage1d,
+		Usage7d:           m.Usage7d,
+		Window5hStart:     m.Window5hStart,
+		Window1dStart:     m.Window1dStart,
+		Window7dStart:     m.Window7dStart,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)
@@ -874,6 +903,9 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 	}
 	if m.Edges.Group != nil {
 		out.Group = groupEntityToService(m.Edges.Group)
+	}
+	if out.RoutingMode == "" {
+		out.RoutingMode = service.APIKeyRoutingModeFixed
 	}
 	return out
 }

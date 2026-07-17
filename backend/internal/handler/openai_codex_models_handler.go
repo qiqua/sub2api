@@ -31,6 +31,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Codex models manifest is only available for OpenAI groups")
 		return
 	}
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, "")
 
 	maxAccountSwitches := h.maxAccountSwitches
 	if maxAccountSwitches <= 0 {

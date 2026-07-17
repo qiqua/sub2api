@@ -996,6 +996,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				return rateOrder.compare(available[i].account, available[j].account) < 0
 			})
 		}
+		sort.SliceStable(available, func(i, j int) bool {
+			return compareOpenAILargeContextPoolPreference(ctx, s.cfg, available[i].account, available[j].account) < 0
+		})
 
 		selectionOrder := make([]accountWithLoad, 0, len(available))
 		if requireCompact {
@@ -1055,6 +1058,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if requireCompact {
 			ordered = prioritizeOpenAICompactAccounts(ordered)
 		}
+		sort.SliceStable(ordered, func(i, j int) bool {
+			return compareOpenAILargeContextPoolPreference(ctx, s.cfg, ordered[i], ordered[j]) < 0
+		})
 		for _, acc := range ordered {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
 			if fresh == nil {
@@ -1105,6 +1111,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if requireCompact {
 		candidates = prioritizeOpenAICompactAccounts(candidates)
 	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return compareOpenAILargeContextPoolPreference(ctx, s.cfg, candidates[i], candidates[j]) < 0
+	})
 	for _, acc := range candidates {
 		fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
 		if fresh == nil {

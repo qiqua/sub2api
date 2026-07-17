@@ -46,6 +46,7 @@ type GatewayHandler struct {
 	billingCacheService       *service.BillingCacheService
 	usageService              *service.UsageService
 	apiKeyService             *service.APIKeyService
+	apiKeyAutoRouter          *service.APIKeyAutoRouter
 	usageRecordWorkerPool     *service.UsageRecordWorkerPool
 	errorPassthroughService   *service.ErrorPassthroughService
 	contentModerationService  *service.ContentModerationService
@@ -74,6 +75,7 @@ func NewGatewayHandler(
 	userMsgQueueService *service.UserMessageQueueService,
 	cfg *config.Config,
 	settingService *service.SettingService,
+	apiKeyAutoRouterOpt ...*service.APIKeyAutoRouter,
 ) *GatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 10
@@ -93,6 +95,10 @@ func NewGatewayHandler(
 	if userMsgQueueService != nil && cfg != nil {
 		umqHelper = NewUserMsgQueueHelper(userMsgQueueService, SSEPingFormatClaude, pingInterval)
 	}
+	var apiKeyAutoRouter *service.APIKeyAutoRouter
+	if len(apiKeyAutoRouterOpt) > 0 {
+		apiKeyAutoRouter = apiKeyAutoRouterOpt[0]
+	}
 
 	return &GatewayHandler{
 		gatewayService:            gatewayService,
@@ -103,6 +109,7 @@ func NewGatewayHandler(
 		billingCacheService:       billingCacheService,
 		usageService:              usageService,
 		apiKeyService:             apiKeyService,
+		apiKeyAutoRouter:          apiKeyAutoRouter,
 		usageRecordWorkerPool:     usageRecordWorkerPool,
 		errorPassthroughService:   errorPassthroughService,
 		contentModerationService:  contentModerationService,
@@ -167,6 +174,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
+	reqLog = annotateOpenAILargeContextRequest(c, reqLog, h.cfg, "gateway.messages", reqStream, body)
+
+	// 验证 model 必填
+	if reqModel == "" {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
+		return
+	}
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel)
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -192,12 +207,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
-
-	// 验证 model 必填
-	if reqModel == "" {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
-		return
-	}
 
 	if decision := h.checkContentModeration(c, reqLog, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body); decision != nil && decision.Blocked {
 		h.errorResponse(c, contentModerationStatus(decision), contentModerationErrorCode(decision), decision.Message)
@@ -1294,6 +1303,11 @@ func cloneAPIKeyWithGroup(apiKey *service.APIKey, group *service.Group) *service
 	}
 	cloned := *apiKey
 	groupID := group.ID
+	if cloned.User != nil && (cloned.GroupID == nil || *cloned.GroupID != groupID) {
+		user := *cloned.User
+		user.UserGroupRPMOverride = nil
+		cloned.User = &user
+	}
 	cloned.GroupID = &groupID
 	cloned.Group = group
 	return &cloned
@@ -1891,6 +1905,8 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
+
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, parsedReq.Model)
 
 	setOpsRequestContext(c, parsedReq.Model, parsedReq.Stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(parsedReq.Stream, false)))

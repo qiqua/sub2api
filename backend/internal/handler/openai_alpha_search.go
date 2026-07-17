@@ -76,6 +76,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	}
 	requestedModel := strings.TrimSpace(modelResult.String())
 	reqLog = reqLog.With(zap.String("model", requestedModel))
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, requestedModel)
 	setOpsRequestContext(c, requestedModel, false)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
 

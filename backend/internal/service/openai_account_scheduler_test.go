@@ -2372,6 +2372,46 @@ func TestDefaultOpenAIAccountScheduler_ShouldEscapeStickyAccount_ThresholdBounda
 	require.InDelta(t, 15000, observedTTFT, 1e-9)
 }
 
+func TestOpenAIAccountRuntimeStats_AutoHealthFailureCooldownAndDurableRecall(t *testing.T) {
+	stats := newOpenAIAccountRuntimeStats()
+	health := defaultOpenAIAccountAutoHealthConfig()
+	health.failureConsecutive = 2
+	health.durableFailureConsecutive = 3
+	health.cooldown = time.Minute
+	health.maxCooldown = 5 * time.Minute
+	health.durableCooldown = 3 * time.Minute
+	health.durableMaxCooldown = 10 * time.Minute
+
+	accountID := int64(99001)
+	first := stats.reportWithHealth(accountID, OpenAIAccountScheduleReport{Success: false, StatusCode: 503}, health)
+	require.True(t, first.blockUntil.IsZero())
+	require.True(t, first.durableUntil.IsZero())
+
+	second := stats.reportWithHealth(accountID, OpenAIAccountScheduleReport{Success: false, StatusCode: 503}, health)
+	require.False(t, second.blockUntil.IsZero())
+	require.True(t, second.durableUntil.IsZero())
+	require.Equal(t, "auto_health_failures_transient", second.reason)
+
+	third := stats.reportWithHealth(accountID, OpenAIAccountScheduleReport{Success: false, StatusCode: 503}, health)
+	require.False(t, third.blockUntil.IsZero())
+	require.False(t, third.durableUntil.IsZero())
+	require.Equal(t, "auto_health_failures_durable_transient", third.durableReason)
+}
+
+func TestOpenAIAccountRuntimeStats_AutoHealthSuccessResetsFailureStreak(t *testing.T) {
+	stats := newOpenAIAccountRuntimeStats()
+	health := defaultOpenAIAccountAutoHealthConfig()
+	health.failureConsecutive = 2
+
+	accountID := int64(99002)
+	stats.reportWithHealth(accountID, OpenAIAccountScheduleReport{Success: false, StatusCode: 502}, health)
+	stats.reportWithHealth(accountID, OpenAIAccountScheduleReport{Success: true}, health)
+	decision := stats.reportWithHealth(accountID, OpenAIAccountScheduleReport{Success: false, StatusCode: 502}, health)
+
+	require.True(t, decision.blockUntil.IsZero())
+	require.Equal(t, int64(1), decision.consecutiveFailures)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky_ForceHTTP(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(1010)

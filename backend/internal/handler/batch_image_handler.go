@@ -17,13 +17,18 @@ import (
 )
 
 type BatchImageHandler struct {
-	service  *service.BatchImagePublicService
-	download *service.BatchImageDownloadService
-	cleanup  *service.BatchImageCleanupService
+	service          *service.BatchImagePublicService
+	download         *service.BatchImageDownloadService
+	cleanup          *service.BatchImageCleanupService
+	apiKeyAutoRouter *service.APIKeyAutoRouter
 }
 
-func NewBatchImageHandler(service *service.BatchImagePublicService, download *service.BatchImageDownloadService, cleanup *service.BatchImageCleanupService) *BatchImageHandler {
-	return &BatchImageHandler{service: service, download: download, cleanup: cleanup}
+func NewBatchImageHandler(batchService *service.BatchImagePublicService, download *service.BatchImageDownloadService, cleanup *service.BatchImageCleanupService, apiKeyAutoRouterOpt ...*service.APIKeyAutoRouter) *BatchImageHandler {
+	var apiKeyAutoRouter *service.APIKeyAutoRouter
+	if len(apiKeyAutoRouterOpt) > 0 {
+		apiKeyAutoRouter = apiKeyAutoRouterOpt[0]
+	}
+	return &BatchImageHandler{service: batchService, download: download, cleanup: cleanup, apiKeyAutoRouter: apiKeyAutoRouter}
 }
 
 func (h *BatchImageHandler) Submit(c *gin.Context) {
@@ -31,6 +36,9 @@ func (h *BatchImageHandler) Submit(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		batchImageError(c, service.ErrBatchImageInvalidItems)
 		return
+	}
+	if apiKey, ok := middleware.GetAPIKeyFromContext(c); ok && apiKey != nil {
+		applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, req.Model)
 	}
 	owner, ok := batchImageOwnerFromContext(c)
 	if !ok {
@@ -83,6 +91,9 @@ func (h *BatchImageHandler) List(c *gin.Context) {
 }
 
 func (h *BatchImageHandler) Models(c *gin.Context) {
+	if apiKey, ok := middleware.GetAPIKeyFromContext(c); ok && apiKey != nil {
+		applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, "")
+	}
 	owner, ok := batchImageOwnerFromContext(c)
 	if !ok {
 		batchImageError(c, infraerrors.New(http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required"))

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -103,6 +104,82 @@ func ProvideAdminSettingHandler(settingService *service.SettingService, emailSer
 	return h
 }
 
+// ProvideGatewayHandler gives Wire a non-variadic provider for GatewayHandler.
+func ProvideGatewayHandler(
+	gatewayService *service.GatewayService,
+	openAIGatewayService *service.OpenAIGatewayService,
+	geminiCompatService *service.GeminiMessagesCompatService,
+	antigravityGatewayService *service.AntigravityGatewayService,
+	userService *service.UserService,
+	concurrencyService *service.ConcurrencyService,
+	billingCacheService *service.BillingCacheService,
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	errorPassthroughService *service.ErrorPassthroughService,
+	contentModerationService *service.ContentModerationService,
+	userMsgQueueService *service.UserMessageQueueService,
+	cfg *config.Config,
+	settingService *service.SettingService,
+	apiKeyAutoRouter *service.APIKeyAutoRouter,
+) *GatewayHandler {
+	return NewGatewayHandler(
+		gatewayService,
+		openAIGatewayService,
+		geminiCompatService,
+		antigravityGatewayService,
+		userService,
+		concurrencyService,
+		billingCacheService,
+		usageService,
+		apiKeyService,
+		usageRecordWorkerPool,
+		errorPassthroughService,
+		contentModerationService,
+		userMsgQueueService,
+		cfg,
+		settingService,
+		apiKeyAutoRouter,
+	)
+}
+
+// ProvideOpenAIGatewayHandler gives Wire a non-variadic provider for OpenAIGatewayHandler.
+func ProvideOpenAIGatewayHandler(
+	gatewayService *service.OpenAIGatewayService,
+	concurrencyService *service.ConcurrencyService,
+	billingCacheService *service.BillingCacheService,
+	apiKeyService *service.APIKeyService,
+	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	errorPassthroughService *service.ErrorPassthroughService,
+	contentModerationService *service.ContentModerationService,
+	opsService *service.OpsService,
+	cfg *config.Config,
+	apiKeyAutoRouter *service.APIKeyAutoRouter,
+) *OpenAIGatewayHandler {
+	return NewOpenAIGatewayHandler(
+		gatewayService,
+		concurrencyService,
+		billingCacheService,
+		apiKeyService,
+		usageRecordWorkerPool,
+		errorPassthroughService,
+		contentModerationService,
+		opsService,
+		cfg,
+		apiKeyAutoRouter,
+	)
+}
+
+// ProvideBatchImageHandler gives Wire a non-variadic provider for BatchImageHandler.
+func ProvideBatchImageHandler(
+	batchService *service.BatchImagePublicService,
+	download *service.BatchImageDownloadService,
+	cleanup *service.BatchImageCleanupService,
+	apiKeyAutoRouter *service.APIKeyAutoRouter,
+) *BatchImageHandler {
+	return NewBatchImageHandler(batchService, download, cleanup, apiKeyAutoRouter)
+}
+
 // ProvideHandlers creates the Handlers struct
 func ProvideHandlers(
 	authHandler *AuthHandler,
@@ -159,15 +236,15 @@ var ProviderSet = wire.NewSet(
 	NewSubscriptionHandler,
 	NewAnnouncementHandler,
 	NewChannelMonitorUserHandler,
-	NewGatewayHandler,
-	NewOpenAIGatewayHandler,
+	ProvideGatewayHandler,
+	ProvideOpenAIGatewayHandler,
 	NewTotpHandler,
 	ProvideSettingHandler,
 	NewPaymentHandler,
 	NewPaymentWebhookHandler,
 	NewAvailableChannelHandler,
 	NewAsyncImageHandler,
-	NewBatchImageHandler,
+	ProvideBatchImageHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

@@ -22,6 +22,7 @@ type GroupAccountCapacityRow struct {
 	GroupID             int64
 	AccountID           int64
 	Concurrency         int
+	LoadFactor          *int
 	Extra               map[string]any
 	SessionWindowStart  *time.Time
 	SessionWindowEnd    *time.Time
@@ -76,6 +77,37 @@ func (s *GroupCapacityService) GetAllGroupCapacity(ctx context.Context) ([]Group
 	return s.getGroupCapacitiesSequential(ctx, groupIDs), nil
 }
 
+// GetGroupCapacities returns capacity summary for the requested group IDs.
+func (s *GroupCapacityService) GetGroupCapacities(ctx context.Context, groupIDs []int64) ([]GroupCapacitySummary, error) {
+	groupIDs = uniquePositiveGroupCapacityIDs(groupIDs)
+	if len(groupIDs) == 0 {
+		return []GroupCapacitySummary{}, nil
+	}
+	if lister, ok := s.accountRepo.(groupCapacityAccountLister); ok {
+		return s.getGroupCapacitiesBatch(ctx, groupIDs, lister)
+	}
+	return s.getGroupCapacitiesSequential(ctx, groupIDs), nil
+}
+
+func uniquePositiveGroupCapacityIDs(ids []int64) []int64 {
+	if len(ids) == 0 {
+		return []int64{}
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
 func (s *GroupCapacityService) listActiveGroupIDs(ctx context.Context) ([]int64, error) {
 	if lister, ok := s.groupRepo.(groupCapacityActiveGroupIDLister); ok {
 		return lister.ListActiveIDs(ctx)
@@ -102,6 +134,93 @@ func (s *GroupCapacityService) getGroupCapacitiesSequential(ctx context.Context,
 		}
 		cap.GroupID = groupID
 		results = append(results, cap)
+	}
+	return results
+}
+
+func (s *GroupCapacityService) summarizeCapacitiesFromAccounts(ctx context.Context, grouped map[int64][]Account) map[int64]GroupCapacitySummary {
+	results := make(map[int64]GroupCapacitySummary, len(grouped))
+	if len(grouped) == 0 {
+		return results
+	}
+
+	refs := make([]groupCapacityAccountRef, 0)
+	seenGroupAccount := make(map[groupCapacityAccountRef]struct{})
+	accountIDSet := make(map[int64]struct{})
+	accountIDs := make([]int64, 0)
+	sessionTimeouts := make(map[int64]time.Duration)
+	needsSessions := false
+	needsRPM := false
+
+	for groupID, accounts := range grouped {
+		if groupID <= 0 {
+			continue
+		}
+		summary := results[groupID]
+		summary.GroupID = groupID
+		for i := range accounts {
+			acc := &accounts[i]
+			if acc.ID <= 0 {
+				continue
+			}
+			ref := groupCapacityAccountRef{groupID: groupID, accountID: acc.ID}
+			if _, ok := seenGroupAccount[ref]; ok {
+				continue
+			}
+			seenGroupAccount[ref] = struct{}{}
+			refs = append(refs, ref)
+			if _, ok := accountIDSet[acc.ID]; !ok {
+				accountIDSet[acc.ID] = struct{}{}
+				accountIDs = append(accountIDs, acc.ID)
+			}
+
+			summary.ConcurrencyMax += acc.EffectiveLoadFactor()
+			if maxSessions := acc.GetMaxSessions(); maxSessions > 0 {
+				needsSessions = true
+				summary.SessionsMax += maxSessions
+				timeout := time.Duration(acc.GetSessionIdleTimeoutMinutes()) * time.Minute
+				if timeout <= 0 {
+					timeout = 5 * time.Minute
+				}
+				sessionTimeouts[acc.ID] = timeout
+			}
+			if rpm := acc.GetBaseRPM(); rpm > 0 {
+				needsRPM = true
+				summary.RPMMax += rpm
+			}
+		}
+		results[groupID] = summary
+	}
+
+	if len(accountIDs) == 0 {
+		return results
+	}
+
+	concurrencyMap := map[int64]int{}
+	if s != nil && s.concurrencyService != nil {
+		concurrencyMap, _ = s.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+	}
+
+	var sessionsMap map[int64]int
+	if needsSessions && s != nil && s.sessionLimitCache != nil {
+		sessionsMap, _ = s.sessionLimitCache.GetActiveSessionCountBatch(ctx, accountIDs, sessionTimeouts)
+	}
+
+	var rpmMap map[int64]int
+	if needsRPM && s != nil && s.rpmCache != nil {
+		rpmMap, _ = s.rpmCache.GetRPMBatch(ctx, accountIDs)
+	}
+
+	for _, ref := range refs {
+		summary := results[ref.groupID]
+		summary.ConcurrencyUsed += concurrencyMap[ref.accountID]
+		if sessionsMap != nil && summary.SessionsMax > 0 {
+			summary.SessionsUsed += sessionsMap[ref.accountID]
+		}
+		if rpmMap != nil && summary.RPMMax > 0 {
+			summary.RPMUsed += rpmMap[ref.accountID]
+		}
+		results[ref.groupID] = summary
 	}
 	return results
 }
@@ -157,13 +276,14 @@ func (s *GroupCapacityService) getGroupCapacitiesBatch(ctx context.Context, grou
 		acc := Account{
 			ID:                  row.AccountID,
 			Concurrency:         row.Concurrency,
+			LoadFactor:          row.LoadFactor,
 			Extra:               row.Extra,
 			SessionWindowStart:  row.SessionWindowStart,
 			SessionWindowEnd:    row.SessionWindowEnd,
 			SessionWindowStatus: row.SessionWindowStatus,
 		}
 
-		results[idx].ConcurrencyMax += acc.Concurrency
+		results[idx].ConcurrencyMax += acc.EffectiveLoadFactor()
 
 		if maxSessions := acc.GetMaxSessions(); maxSessions > 0 {
 			results[idx].SessionsMax += maxSessions
@@ -251,7 +371,7 @@ func (s *GroupCapacityService) getGroupCapacity(ctx context.Context, groupID int
 	for i := range accounts {
 		acc := &accounts[i]
 		accountIDs = append(accountIDs, acc.ID)
-		concurrencyMax += acc.Concurrency
+		concurrencyMax += acc.EffectiveLoadFactor()
 
 		if ms := acc.GetMaxSessions(); ms > 0 {
 			sessionsMax += ms
@@ -268,7 +388,10 @@ func (s *GroupCapacityService) getGroupCapacity(ctx context.Context, groupID int
 	}
 
 	// Batch query runtime data from Redis
-	concurrencyMap, _ := s.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+	concurrencyMap := map[int64]int{}
+	if s.concurrencyService != nil {
+		concurrencyMap, _ = s.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+	}
 
 	var sessionsMap map[int64]int
 	if sessionsMax > 0 && s.sessionLimitCache != nil {

@@ -1118,6 +1118,53 @@ type GatewayOpenAISchedulerConfig struct {
 	StickyEscapeTTFTMs int `mapstructure:"sticky_escape_ttft_ms"`
 	// StickyEscapeErrorRate: 错误率 EWMA 超过该阈值时跳过 sticky
 	StickyEscapeErrorRate float64 `mapstructure:"sticky_escape_error_rate"`
+	// LargeContext: 大上下文请求调度隔离配置。只影响账号选择，不修改/截断请求体。
+	LargeContext GatewayOpenAILargeContextConfig `mapstructure:"large_context"`
+	// AutoHealth: 账号自动学习健康策略。只调整调度/临时隔离，默认不永久关闭账号。
+	AutoHealth GatewayOpenAIAutoHealthConfig `mapstructure:"auto_health"`
+}
+
+// GatewayOpenAILargeContextConfig controls large-context aware account routing.
+type GatewayOpenAILargeContextConfig struct {
+	// Enabled: 开启后根据请求体大小标记 normal/medium/large/huge，并在调度中偏向 large_context_pool 账号。
+	Enabled bool `mapstructure:"enabled"`
+	// MediumBytes/LargeBytes/HugeBytes: 请求体分级阈值。只用于调度和日志，不限制请求大小。
+	MediumBytes int64 `mapstructure:"medium_bytes"`
+	LargeBytes  int64 `mapstructure:"large_bytes"`
+	HugeBytes   int64 `mapstructure:"huge_bytes"`
+	// LargePoolBonus: large/huge 请求命中 large_context_pool 账号时增加的调度分。
+	LargePoolBonus float64 `mapstructure:"large_pool_bonus"`
+	// NonLargePoolPenalty: large/huge 请求落到非 large_context_pool 账号时扣减的调度分。
+	NonLargePoolPenalty float64 `mapstructure:"non_large_pool_penalty"`
+	// NormalToLargePoolPenalty: normal 请求落到 large_context_pool 账号时扣减的调度分，用于保护大上下文池。
+	NormalToLargePoolPenalty float64 `mapstructure:"normal_to_large_pool_penalty"`
+}
+
+// GatewayOpenAIAutoHealthConfig controls runtime account learning, temporary
+// close/quarantine and recall. It never truncates or changes user request body.
+type GatewayOpenAIAutoHealthConfig struct {
+	// Enabled: 是否启用自动健康学习的临时隔离/关闭动作；EWMA 降权/提权仍会随结果更新。
+	Enabled bool `mapstructure:"enabled"`
+	// SlowTTFTMs: 首 token 延迟达到该值视为慢请求。
+	SlowTTFTMs int `mapstructure:"slow_ttft_ms"`
+	// SlowConsecutive: 连续慢请求达到该次数后临时隔离。
+	SlowConsecutive int `mapstructure:"slow_consecutive"`
+	// FailureConsecutive: 连续失败达到该次数后临时隔离。
+	FailureConsecutive int `mapstructure:"failure_consecutive"`
+	// CooldownSeconds: 首次触发临时隔离时长。
+	CooldownSeconds int `mapstructure:"cooldown_seconds"`
+	// MaxCooldownSeconds: 连续恶化后的最大隔离时长。
+	MaxCooldownSeconds int `mapstructure:"max_cooldown_seconds"`
+	// DurableTempDisableEnabled: 开启后把严重异常写入 temp_unschedulable_until，进程重启后仍保持临时关闭。
+	DurableTempDisableEnabled bool `mapstructure:"durable_temp_disable_enabled"`
+	// DurableFailureConsecutive: 连续失败达到该次数后写入持久化临时关闭。
+	DurableFailureConsecutive int `mapstructure:"durable_failure_consecutive"`
+	// DurableSlowConsecutive: 连续慢请求达到该次数后写入持久化临时关闭。
+	DurableSlowConsecutive int `mapstructure:"durable_slow_consecutive"`
+	// DurableCooldownSeconds: 持久化临时关闭的基础时长。
+	DurableCooldownSeconds int `mapstructure:"durable_cooldown_seconds"`
+	// DurableMaxCooldownSeconds: 持久化临时关闭的最大时长；到期后自动召回参与调度。
+	DurableMaxCooldownSeconds int `mapstructure:"durable_max_cooldown_seconds"`
 }
 
 // GatewayUsageRecordConfig 使用量记录异步队列配置
@@ -2097,6 +2144,24 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.upstream_cost", 0.0)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.previous_response", 5.0)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.session_sticky", 3.0)
+	viper.SetDefault("gateway.openai_scheduler.large_context.enabled", true)
+	viper.SetDefault("gateway.openai_scheduler.large_context.medium_bytes", int64(1*1024*1024))
+	viper.SetDefault("gateway.openai_scheduler.large_context.large_bytes", int64(10*1024*1024))
+	viper.SetDefault("gateway.openai_scheduler.large_context.huge_bytes", int64(30*1024*1024))
+	viper.SetDefault("gateway.openai_scheduler.large_context.large_pool_bonus", 0.8)
+	viper.SetDefault("gateway.openai_scheduler.large_context.non_large_pool_penalty", 0.4)
+	viper.SetDefault("gateway.openai_scheduler.large_context.normal_to_large_pool_penalty", 0.25)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.enabled", true)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.slow_ttft_ms", 60000)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.slow_consecutive", 3)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.failure_consecutive", 3)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.cooldown_seconds", 300)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.max_cooldown_seconds", 1800)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.durable_temp_disable_enabled", true)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.durable_failure_consecutive", 6)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.durable_slow_consecutive", 5)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.durable_cooldown_seconds", 900)
+	viper.SetDefault("gateway.openai_scheduler.auto_health.durable_max_cooldown_seconds", 3600)
 	// OpenAI HTTP upstream protocol strategy
 	viper.SetDefault("gateway.openai_http2.enabled", true)
 	viper.SetDefault("gateway.openai_http2.allow_proxy_fallback_to_http1", true)
@@ -2986,6 +3051,59 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIScheduler.StickyEscapeErrorRate < 0 || c.Gateway.OpenAIScheduler.StickyEscapeErrorRate > 1 {
 		return fmt.Errorf("gateway.openai_scheduler.sticky_escape_error_rate must be between 0 and 1")
+	}
+	if c.Gateway.OpenAIScheduler.LargeContext.Enabled {
+		largeContext := c.Gateway.OpenAIScheduler.LargeContext
+		if largeContext.MediumBytes <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler.large_context.medium_bytes must be positive")
+		}
+		if largeContext.LargeBytes <= largeContext.MediumBytes {
+			return fmt.Errorf("gateway.openai_scheduler.large_context.large_bytes must be greater than medium_bytes")
+		}
+		if largeContext.HugeBytes <= largeContext.LargeBytes {
+			return fmt.Errorf("gateway.openai_scheduler.large_context.huge_bytes must be greater than large_bytes")
+		}
+		for _, value := range []float64{
+			largeContext.LargePoolBonus,
+			largeContext.NonLargePoolPenalty,
+			largeContext.NormalToLargePoolPenalty,
+		} {
+			if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("gateway.openai_scheduler.large_context score weights must be non-negative and finite")
+			}
+		}
+	}
+	if c.Gateway.OpenAIScheduler.AutoHealth.Enabled {
+		autoHealth := c.Gateway.OpenAIScheduler.AutoHealth
+		if autoHealth.SlowTTFTMs <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler.auto_health.slow_ttft_ms must be positive")
+		}
+		if autoHealth.SlowConsecutive <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler.auto_health.slow_consecutive must be positive")
+		}
+		if autoHealth.FailureConsecutive <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler.auto_health.failure_consecutive must be positive")
+		}
+		if autoHealth.CooldownSeconds <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler.auto_health.cooldown_seconds must be positive")
+		}
+		if autoHealth.MaxCooldownSeconds < autoHealth.CooldownSeconds {
+			return fmt.Errorf("gateway.openai_scheduler.auto_health.max_cooldown_seconds must be greater than or equal to cooldown_seconds")
+		}
+		if autoHealth.DurableTempDisableEnabled {
+			if autoHealth.DurableFailureConsecutive < autoHealth.FailureConsecutive {
+				return fmt.Errorf("gateway.openai_scheduler.auto_health.durable_failure_consecutive must be greater than or equal to failure_consecutive")
+			}
+			if autoHealth.DurableSlowConsecutive < autoHealth.SlowConsecutive {
+				return fmt.Errorf("gateway.openai_scheduler.auto_health.durable_slow_consecutive must be greater than or equal to slow_consecutive")
+			}
+			if autoHealth.DurableCooldownSeconds <= 0 {
+				return fmt.Errorf("gateway.openai_scheduler.auto_health.durable_cooldown_seconds must be positive")
+			}
+			if autoHealth.DurableMaxCooldownSeconds < autoHealth.DurableCooldownSeconds {
+				return fmt.Errorf("gateway.openai_scheduler.auto_health.durable_max_cooldown_seconds must be greater than or equal to durable_cooldown_seconds")
+			}
+		}
 	}
 	if c.Gateway.MaxLineSize < 0 {
 		return fmt.Errorf("gateway.max_line_size must be non-negative")
