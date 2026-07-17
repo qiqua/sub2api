@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/google/wire"
@@ -40,6 +41,7 @@ func ProvideAdminHandlers(
 	channelMonitorHandler *admin.ChannelMonitorHandler,
 	channelMonitorTemplateHandler *admin.ChannelMonitorRequestTemplateHandler,
 	contentModerationHandler *admin.ContentModerationHandler,
+	promptAuditHandler *securityaudit.PromptAdminHandler,
 	paymentHandler *admin.PaymentHandler,
 	affiliateHandler *admin.AffiliateHandler,
 	complianceHandler *admin.ComplianceHandler,
@@ -78,11 +80,94 @@ func ProvideAdminHandlers(
 		ChannelMonitor:         channelMonitorHandler,
 		ChannelMonitorTemplate: channelMonitorTemplateHandler,
 		ContentModeration:      contentModerationHandler,
+		PromptAudit:            promptAuditHandler,
 		Payment:                paymentHandler,
 		Affiliate:              affiliateHandler,
 		Compliance:             complianceHandler,
 		AuditLog:               auditLogHandler,
 	}
+}
+
+func ProvideGatewayHandler(
+	gatewayService *service.GatewayService,
+	openAIGatewayService *service.OpenAIGatewayService,
+	geminiCompatService *service.GeminiMessagesCompatService,
+	antigravityGatewayService *service.AntigravityGatewayService,
+	userService *service.UserService,
+	concurrencyService *service.ConcurrencyService,
+	billingCacheService *service.BillingCacheService,
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	errorPassthroughService *service.ErrorPassthroughService,
+	contentModerationService *service.ContentModerationService,
+	userMsgQueueService *service.UserMessageQueueService,
+	cfg *config.Config,
+	settingService *service.SettingService,
+	coordinator *securityaudit.Coordinator,
+	apiKeyAutoRouter *service.APIKeyAutoRouter,
+) *GatewayHandler {
+	h := NewGatewayHandler(
+		gatewayService,
+		openAIGatewayService,
+		geminiCompatService,
+		antigravityGatewayService,
+		userService,
+		concurrencyService,
+		billingCacheService,
+		usageService,
+		apiKeyService,
+		usageRecordWorkerPool,
+		errorPassthroughService,
+		contentModerationService,
+		userMsgQueueService,
+		cfg,
+		settingService,
+		apiKeyAutoRouter,
+	)
+	h.securityAuditCoordinator = coordinator
+	return h
+}
+
+func ProvideOpenAIGatewayHandler(
+	gatewayService *service.OpenAIGatewayService,
+	concurrencyService *service.ConcurrencyService,
+	billingCacheService *service.BillingCacheService,
+	apiKeyService *service.APIKeyService,
+	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	errorPassthroughService *service.ErrorPassthroughService,
+	contentModerationService *service.ContentModerationService,
+	opsService *service.OpsService,
+	cfg *config.Config,
+	coordinator *securityaudit.Coordinator,
+	apiKeyAutoRouter *service.APIKeyAutoRouter,
+) *OpenAIGatewayHandler {
+	h := NewOpenAIGatewayHandler(
+		gatewayService,
+		concurrencyService,
+		billingCacheService,
+		apiKeyService,
+		usageRecordWorkerPool,
+		errorPassthroughService,
+		contentModerationService,
+		opsService,
+		cfg,
+		apiKeyAutoRouter,
+	)
+	h.securityAuditCoordinator = coordinator
+	return h
+}
+
+func ProvideBatchImageHandler(
+	batchService *service.BatchImagePublicService,
+	download *service.BatchImageDownloadService,
+	cleanup *service.BatchImageCleanupService,
+	openAI *OpenAIGatewayHandler,
+	apiKeyAutoRouter *service.APIKeyAutoRouter,
+) *BatchImageHandler {
+	h := NewBatchImageHandler(batchService, download, cleanup, apiKeyAutoRouter)
+	h.openAI = openAI
+	return h
 }
 
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService
@@ -102,82 +187,6 @@ func ProvideAdminSettingHandler(settingService *service.SettingService, emailSer
 	h := admin.NewSettingHandler(settingService, emailService, turnstileService, opsService, paymentConfigService, paymentService, userAttributeService)
 	h.SetNotificationEmailService(notificationEmailService)
 	return h
-}
-
-// ProvideGatewayHandler gives Wire a non-variadic provider for GatewayHandler.
-func ProvideGatewayHandler(
-	gatewayService *service.GatewayService,
-	openAIGatewayService *service.OpenAIGatewayService,
-	geminiCompatService *service.GeminiMessagesCompatService,
-	antigravityGatewayService *service.AntigravityGatewayService,
-	userService *service.UserService,
-	concurrencyService *service.ConcurrencyService,
-	billingCacheService *service.BillingCacheService,
-	usageService *service.UsageService,
-	apiKeyService *service.APIKeyService,
-	usageRecordWorkerPool *service.UsageRecordWorkerPool,
-	errorPassthroughService *service.ErrorPassthroughService,
-	contentModerationService *service.ContentModerationService,
-	userMsgQueueService *service.UserMessageQueueService,
-	cfg *config.Config,
-	settingService *service.SettingService,
-	apiKeyAutoRouter *service.APIKeyAutoRouter,
-) *GatewayHandler {
-	return NewGatewayHandler(
-		gatewayService,
-		openAIGatewayService,
-		geminiCompatService,
-		antigravityGatewayService,
-		userService,
-		concurrencyService,
-		billingCacheService,
-		usageService,
-		apiKeyService,
-		usageRecordWorkerPool,
-		errorPassthroughService,
-		contentModerationService,
-		userMsgQueueService,
-		cfg,
-		settingService,
-		apiKeyAutoRouter,
-	)
-}
-
-// ProvideOpenAIGatewayHandler gives Wire a non-variadic provider for OpenAIGatewayHandler.
-func ProvideOpenAIGatewayHandler(
-	gatewayService *service.OpenAIGatewayService,
-	concurrencyService *service.ConcurrencyService,
-	billingCacheService *service.BillingCacheService,
-	apiKeyService *service.APIKeyService,
-	usageRecordWorkerPool *service.UsageRecordWorkerPool,
-	errorPassthroughService *service.ErrorPassthroughService,
-	contentModerationService *service.ContentModerationService,
-	opsService *service.OpsService,
-	cfg *config.Config,
-	apiKeyAutoRouter *service.APIKeyAutoRouter,
-) *OpenAIGatewayHandler {
-	return NewOpenAIGatewayHandler(
-		gatewayService,
-		concurrencyService,
-		billingCacheService,
-		apiKeyService,
-		usageRecordWorkerPool,
-		errorPassthroughService,
-		contentModerationService,
-		opsService,
-		cfg,
-		apiKeyAutoRouter,
-	)
-}
-
-// ProvideBatchImageHandler gives Wire a non-variadic provider for BatchImageHandler.
-func ProvideBatchImageHandler(
-	batchService *service.BatchImagePublicService,
-	download *service.BatchImageDownloadService,
-	cleanup *service.BatchImageCleanupService,
-	apiKeyAutoRouter *service.APIKeyAutoRouter,
-) *BatchImageHandler {
-	return NewBatchImageHandler(batchService, download, cleanup, apiKeyAutoRouter)
 }
 
 // ProvideHandlers creates the Handlers struct
