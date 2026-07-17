@@ -383,21 +383,21 @@ func sanitizeOpenAIAccountScheduleFailureKind(kind string) string {
 	if kind == "" {
 		return ""
 	}
-	var b strings.Builder
+	out := make([]byte, 0, len(kind))
 	for _, r := range kind {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteByte(byte(r))
+			out = append(out, byte(r))
 			continue
 		}
 		if r == '_' || r == '-' || r == '.' {
-			b.WriteByte('_')
+			out = append(out, '_')
 			continue
 		}
-		if b.Len() > 0 {
-			b.WriteByte('_')
+		if len(out) > 0 {
+			out = append(out, '_')
 		}
 	}
-	return strings.Trim(b.String(), "_")
+	return strings.Trim(string(out), "_")
 }
 
 func (s *openAIAccountRuntimeStats) snapshot(accountID int64) (errorRate float64, ttft float64, hasTTFT bool) {
