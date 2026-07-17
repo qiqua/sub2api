@@ -156,6 +156,13 @@
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
+                <span
+                  v-if="isAutoRoutedKey(row)"
+                  class="rounded-full bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-300"
+                  :title="t('keys.autoRouting.badgeTitle')"
+                >
+                  {{ t('keys.autoRouting.badge', { count: (row.auto_route_group_ids?.length || 0) + 1 }) }}
+                </span>
                 <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
                 <svg
                   class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
@@ -465,7 +472,7 @@
         </div>
 
         <div>
-          <label class="input-label">{{ t('keys.groupLabel') }}</label>
+          <label class="input-label">{{ t('keys.primaryGroupLabel') }}</label>
           <Select
             v-model="formData.group_id"
             :options="groupOptions"
@@ -505,6 +512,94 @@
               />
             </template>
           </Select>
+        </div>
+
+        <!-- API Key automatic same-platform group routing -->
+        <div
+          v-if="formData.group_id !== null"
+          class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-dark-600 dark:bg-dark-800/60"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <label class="input-label mb-1">{{ t('keys.autoRouting.title') }}</label>
+              <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                {{ t('keys.autoRouting.description') }}
+              </p>
+            </div>
+            <button
+              type="button"
+              data-test="auto-routing-toggle"
+              @click="toggleAutoRouting"
+              :disabled="autoRouteCandidateOptions.length === 0"
+              :class="[
+                'relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                autoRouteCandidateOptions.length === 0
+                  ? 'cursor-not-allowed bg-gray-200 opacity-60 dark:bg-dark-600'
+                  : 'cursor-pointer',
+                formData.enable_auto_routing && autoRouteCandidateOptions.length > 0
+                  ? 'bg-primary-600'
+                  : 'bg-gray-200 dark:bg-dark-600'
+              ]"
+              :title="autoRouteCandidateOptions.length === 0 ? t('keys.autoRouting.noCandidates') : undefined"
+            >
+              <span
+                :class="[
+                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  formData.enable_auto_routing && autoRouteCandidateOptions.length > 0 ? 'translate-x-5' : 'translate-x-0'
+                ]"
+              />
+            </button>
+          </div>
+
+          <div v-if="formData.enable_auto_routing" class="mt-4 space-y-3">
+            <p class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t('keys.autoRouting.candidateHint') }}
+            </p>
+            <div
+              v-if="autoRouteCandidateOptions.length > 0"
+              class="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-900/60"
+            >
+              <button
+                v-for="option in autoRouteCandidateOptions"
+                :key="option.value"
+                type="button"
+                data-test="auto-route-candidate"
+                class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-gray-50 dark:hover:bg-dark-700"
+                :aria-pressed="isAutoRouteGroupSelected(option.value)"
+                @click="toggleAutoRouteGroup(option.value)"
+              >
+                <span
+                  :class="[
+                    'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border transition-colors',
+                    isAutoRouteGroupSelected(option.value)
+                      ? 'border-primary-500 bg-primary-500 text-white'
+                      : 'border-gray-300 bg-white text-transparent dark:border-dark-500 dark:bg-dark-800'
+                  ]"
+                >
+                  <Icon name="check" size="xs" :stroke-width="2.5" />
+                </span>
+                <GroupOptionItem
+                  :name="option.label"
+                  :platform="option.platform"
+                  :subscription-type="option.subscriptionType"
+                  :rate-multiplier="option.rate"
+                  :user-rate-multiplier="option.userRate"
+                  :peak-rate-enabled="option.peakRateEnabled"
+                  :peak-start="option.peakStart"
+                  :peak-end="option.peakEnd"
+                  :peak-rate-multiplier="option.peakRateMultiplier"
+                  :description="option.description"
+                  :selected="isAutoRouteGroupSelected(option.value)"
+                />
+              </button>
+            </div>
+            <p v-else class="text-xs text-amber-600 dark:text-amber-400">
+              {{ t('keys.autoRouting.noCandidates') }}
+            </p>
+            <p v-if="formData.auto_route_group_ids.length > 0" class="text-xs text-primary-600 dark:text-primary-400">
+              {{ t('keys.autoRouting.selectedHint', { count: formData.auto_route_group_ids.length, total: formData.auto_route_group_ids.length + 1 }) }}
+            </p>
+          </div>
         </div>
 
         <!-- Custom Key Section (only for create) -->
@@ -1117,7 +1212,7 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
@@ -1157,7 +1252,7 @@ const formatDateTimeLocal = (isoDate: string): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-interface GroupOption {
+interface GroupOption extends Record<string, unknown> {
   value: number
   label: string
   description: string | null
@@ -1330,6 +1425,8 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 const formData = ref({
   name: '',
   group_id: null as number | null,
+  enable_auto_routing: false,
+  auto_route_group_ids: [] as number[],
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1407,21 +1504,93 @@ const onStatusFilterChange = (value: string | number | boolean | null) => {
   onFilterChange()
 }
 
+const toGroupOption = (group: Group): GroupOption => ({
+  value: group.id,
+  label: group.name,
+  description: group.description,
+  rate: group.rate_multiplier,
+  userRate: userGroupRates.value[group.id] ?? null,
+  peakRateEnabled: group.peak_rate_enabled,
+  peakStart: group.peak_start,
+  peakEnd: group.peak_end,
+  peakRateMultiplier: group.peak_rate_multiplier,
+  subscriptionType: group.subscription_type,
+  platform: group.platform
+})
+
+const normalizedFormGroupID = computed(() => {
+  if (formData.value.group_id === null || formData.value.group_id === undefined) return null
+  const id = Number(formData.value.group_id)
+  return Number.isFinite(id) && id > 0 ? id : null
+})
+
+const selectedPrimaryGroup = computed(() => {
+  const id = normalizedFormGroupID.value
+  if (id === null) return null
+  return groups.value.find((group) => group.id === id) ?? null
+})
+
 // Convert groups to Select options format with rate multiplier and subscription type
-const groupOptions = computed(() =>
-  groups.value.map((group) => ({
-    value: group.id,
-    label: group.name,
-    description: group.description,
-    rate: group.rate_multiplier,
-    userRate: userGroupRates.value[group.id] ?? null,
-    peakRateEnabled: group.peak_rate_enabled,
-    peakStart: group.peak_start,
-    peakEnd: group.peak_end,
-    peakRateMultiplier: group.peak_rate_multiplier,
-    subscriptionType: group.subscription_type,
-    platform: group.platform
-  }))
+const groupOptions = computed(() => groups.value.map(toGroupOption))
+
+const autoRouteCandidateGroups = computed(() => {
+  const primary = selectedPrimaryGroup.value
+  if (!primary) return []
+  return groups.value.filter((group) => group.id !== primary.id && group.platform === primary.platform)
+})
+
+const autoRouteCandidateOptions = computed(() => autoRouteCandidateGroups.value.map(toGroupOption))
+
+const isAutoRoutedKey = (key: ApiKey) =>
+  key.routing_mode === 'auto' && Array.isArray(key.auto_route_group_ids) && key.auto_route_group_ids.length > 0
+
+const isAutoRouteGroupSelected = (groupID: number) => formData.value.auto_route_group_ids.includes(groupID)
+
+const sanitizeAutoRouteGroupSelection = () => {
+  const allowed = new Set(autoRouteCandidateGroups.value.map((group) => group.id))
+  const deduped: number[] = []
+  for (const id of formData.value.auto_route_group_ids) {
+    const numericID = Number(id)
+    if (!Number.isFinite(numericID) || !allowed.has(numericID) || deduped.includes(numericID)) {
+      continue
+    }
+    deduped.push(numericID)
+  }
+  formData.value.auto_route_group_ids = deduped
+  if (!selectedPrimaryGroup.value || autoRouteCandidateGroups.value.length === 0) {
+    formData.value.enable_auto_routing = false
+  }
+}
+
+const toggleAutoRouteGroup = (groupID: number) => {
+  const selected = new Set(formData.value.auto_route_group_ids)
+  if (selected.has(groupID)) {
+    selected.delete(groupID)
+  } else {
+    selected.add(groupID)
+  }
+  formData.value.auto_route_group_ids = [...selected]
+  sanitizeAutoRouteGroupSelection()
+}
+
+const toggleAutoRouting = () => {
+  if (autoRouteCandidateOptions.value.length === 0) {
+    appStore.showError(t('keys.autoRouting.noCandidates'))
+    return
+  }
+  formData.value.enable_auto_routing = !formData.value.enable_auto_routing
+  if (!formData.value.enable_auto_routing) {
+    formData.value.auto_route_group_ids = []
+  } else {
+    sanitizeAutoRouteGroupSelection()
+  }
+}
+
+watch(
+  () => [formData.value.group_id, groups.value.length],
+  () => {
+    sanitizeAutoRouteGroupSelection()
+  }
 )
 
 // Group dropdown search
@@ -1564,6 +1733,8 @@ const editKey = (key: ApiKey) => {
   formData.value = {
     name: key.name,
     group_id: key.group_id,
+    enable_auto_routing: key.routing_mode === 'auto',
+    auto_route_group_ids: [...(key.auto_route_group_ids || [])],
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -1660,8 +1831,15 @@ const confirmDelete = (key: ApiKey) => {
 
 const handleSubmit = async () => {
   // Validate group_id is required
-  if (formData.value.group_id === null) {
+  const groupID = normalizedFormGroupID.value
+  if (groupID === null) {
     appStore.showError(t('keys.groupRequired'))
+    return
+  }
+
+  sanitizeAutoRouteGroupSelection()
+  if (formData.value.enable_auto_routing && formData.value.auto_route_group_ids.length === 0) {
+    appStore.showError(t('keys.autoRouting.groupRequired'))
     return
   }
 
@@ -1711,13 +1889,22 @@ const handleSubmit = async () => {
     rate_limit_1d: formData.value.rate_limit_1d && formData.value.rate_limit_1d > 0 ? formData.value.rate_limit_1d : 0,
     rate_limit_7d: formData.value.rate_limit_7d && formData.value.rate_limit_7d > 0 ? formData.value.rate_limit_7d : 0,
   } : { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }
+  const routingData = formData.value.enable_auto_routing ? {
+    routing_mode: 'auto' as const,
+    auto_route_group_ids: [...formData.value.auto_route_group_ids],
+  } : {
+    routing_mode: 'fixed' as const,
+    auto_route_group_ids: [] as number[],
+  }
 
   submitting.value = true
   try {
     if (showEditModal.value && selectedKey.value) {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
-        group_id: formData.value.group_id,
+        group_id: groupID,
+        routing_mode: routingData.routing_mode,
+        auto_route_group_ids: routingData.auto_route_group_ids,
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -1735,13 +1922,14 @@ const handleSubmit = async () => {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
       await keysAPI.create(
         formData.value.name,
-        formData.value.group_id,
+        groupID,
         customKey,
         ipWhitelist,
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        routingData
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1787,6 +1975,8 @@ const closeModals = () => {
   formData.value = {
     name: '',
     group_id: null,
+    enable_auto_routing: false,
+    auto_route_group_ids: [],
     status: 'active',
     use_custom_key: false,
     custom_key: '',

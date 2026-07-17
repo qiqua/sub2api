@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
-import type { ApiKey } from '@/types'
+import type { ApiKey, Group } from '@/types'
 import KeysView from '../KeysView.vue'
 
 const {
   listKeys,
+  createKeyRequest,
+  updateKeyRequest,
   getPublicSettings,
   getDashboardApiKeysUsage,
   getAvailableGroups,
@@ -18,6 +20,8 @@ const {
   nextStep,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
+  createKeyRequest: vi.fn(),
+  updateKeyRequest: vi.fn(),
   getPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
   getAvailableGroups: vi.fn(),
@@ -31,9 +35,14 @@ const {
 
 const messages: Record<string, string> = {
   'common.actions': 'Actions',
+  'common.cancel': 'Cancel',
+  'common.create': 'Create',
+  'common.delete': 'Delete',
+  'common.edit': 'Edit',
   'common.name': 'Name',
   'common.refresh': 'Refresh',
   'common.status': 'Status',
+  'common.update': 'Update',
   'keys.apiKey': 'API Key',
   'keys.allGroups': 'All Groups',
   'keys.allStatus': 'All Status',
@@ -42,10 +51,25 @@ const messages: Record<string, string> = {
   'keys.created': 'Created',
   'keys.expiresAt': 'Expires',
   'keys.group': 'Group',
+  'keys.groupRequired': 'Please select a group',
   'keys.id': 'ID',
+  'keys.keyCreatedSuccess': 'API key created successfully',
+  'keys.keyUpdatedSuccess': 'API key updated successfully',
   'keys.currentConcurrency': 'Current Concurrency',
+  'keys.nameLabel': 'Name',
+  'keys.namePlaceholder': 'My API Key',
+  'keys.primaryGroupLabel': 'Primary group',
+  'keys.selectGroup': 'Select a group',
   'keys.lastUsedAt': 'Last Used',
   'keys.lastUsedIP': 'Last Used IP',
+  'keys.autoRouting.title': 'Multi-group load balancing',
+  'keys.autoRouting.description': 'Auto route description',
+  'keys.autoRouting.candidateHint': 'Select same-platform candidates.',
+  'keys.autoRouting.groupRequired': 'Please select at least one candidate group',
+  'keys.autoRouting.noCandidates': 'No same-platform candidates',
+  'keys.autoRouting.selectedHint': '{count}/{total}',
+  'keys.autoRouting.badge': 'Auto {count} groups',
+  'keys.autoRouting.badgeTitle': 'Auto routing enabled',
   'keys.rateLimitColumn': 'Rate Limit',
   'keys.searchPlaceholder': 'Search name or key...',
   'keys.status.active': 'Active',
@@ -58,8 +82,8 @@ const messages: Record<string, string> = {
 vi.mock('@/api', () => ({
   keysAPI: {
     list: listKeys,
-    create: vi.fn(),
-    update: vi.fn(),
+    create: createKeyRequest,
+    update: updateKeyRequest,
     delete: vi.fn(),
     toggleStatus: vi.fn(),
   },
@@ -111,6 +135,8 @@ const createApiKey = (): ApiKey => ({
   key: 'sk-test-key',
   name: 'test-key',
   group_id: null,
+  routing_mode: 'fixed',
+  auto_route_group_ids: [],
   status: 'active',
   ip_whitelist: [],
   ip_blacklist: [],
@@ -135,6 +161,19 @@ const createApiKey = (): ApiKey => ({
   reset_1d_at: null,
   reset_7d_at: null,
 })
+
+const createGroup = (id: number, name: string, platform: Group['platform'] = 'openai'): Group => ({
+  id,
+  name,
+  description: null,
+  platform,
+  subscription_type: 'standard',
+  rate_multiplier: 1,
+  peak_rate_enabled: false,
+  peak_start: '',
+  peak_end: '',
+  peak_rate_multiplier: 1,
+} as Group)
 
 const AppLayoutStub = {
   template: '<div><slot /></div>',
@@ -173,11 +212,17 @@ const DataTableStub = {
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
         </div>
+        <div data-test="group-cell">
+          <slot name="cell-group" :value="row.group_id" :row="row" />
+        </div>
         <div
           v-if="columns.some((col) => col.key === 'last_used_ip')"
           data-test="last-used-ip"
         >
           <slot name="cell-last_used_ip" :value="row.last_used_ip" :row="row" />
+        </div>
+        <div data-test="actions-cell">
+          <slot name="cell-actions" :row="row" />
         </div>
       </div>
       <slot name="empty" />
@@ -189,7 +234,11 @@ const SelectStub = {
   name: 'Select',
   props: ['modelValue', 'options'],
   emits: ['update:modelValue'],
-  template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"></select>',
+  template: `
+    <select v-bind="$attrs" :value="modelValue" @change="$emit('update:modelValue', Number.isNaN(Number($event.target.value)) ? $event.target.value : Number($event.target.value))">
+      <option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option>
+    </select>
+  `,
 }
 
 const SearchInputStub = {
@@ -215,7 +264,13 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
-const mountView = async () => {
+const BaseDialogRenderStub = {
+  name: 'BaseDialog',
+  props: ['show'],
+  template: '<div v-if="show"><slot /><slot name="footer" /></div>',
+}
+
+const mountView = async (options: { renderDialog?: boolean } = {}) => {
   const wrapper = mount(KeysView, {
     global: {
       stubs: {
@@ -223,7 +278,7 @@ const mountView = async () => {
         TablePageLayout: TablePageLayoutStub,
         DataTable: DataTableStub,
         Pagination: PaginationStub,
-        BaseDialog: true,
+        BaseDialog: options.renderDialog ? BaseDialogRenderStub : true,
         ConfirmDialog: true,
         EmptyState: true,
         Select: SelectStub,
@@ -261,6 +316,8 @@ describe('user KeysView column settings', () => {
     localStorage.clear()
 
     listKeys.mockReset()
+    createKeyRequest.mockReset()
+    updateKeyRequest.mockReset()
     getPublicSettings.mockReset()
     getDashboardApiKeysUsage.mockReset()
     getAvailableGroups.mockReset()
@@ -278,6 +335,8 @@ describe('user KeysView column settings', () => {
       page_size: 20,
       pages: 1,
     })
+    createKeyRequest.mockResolvedValue(createApiKey())
+    updateKeyRequest.mockResolvedValue(createApiKey())
     getPublicSettings.mockResolvedValue({})
     getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
     getAvailableGroups.mockResolvedValue([])
@@ -436,6 +495,86 @@ describe('user KeysView column settings', () => {
         sort_order: 'asc',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+  })
+
+  it('creates an API key with primary group plus same-platform auto-route candidates', async () => {
+    getAvailableGroups.mockResolvedValue([
+      createGroup(10, 'OpenAI A', 'openai'),
+      createGroup(11, 'OpenAI B', 'openai'),
+      createGroup(12, 'Claude A', 'anthropic'),
+    ])
+    const wrapper = await mountView({ renderDialog: true })
+
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-tour="key-form-name"]').setValue('auto route key')
+    await wrapper.get('[data-tour="key-form-group"]').setValue('10')
+    await nextTick()
+
+    await wrapper.get('[data-test="auto-routing-toggle"]').trigger('click')
+    await nextTick()
+    const candidates = wrapper.findAll('[data-test="auto-route-candidate"]')
+    expect(candidates).toHaveLength(1)
+    await candidates[0].trigger('click')
+
+    await wrapper.get('form#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(createKeyRequest).toHaveBeenCalledWith(
+      'auto route key',
+      10,
+      undefined,
+      [],
+      [],
+      0,
+      undefined,
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 },
+      { routing_mode: 'auto', auto_route_group_ids: [11] }
+    )
+  })
+
+  it('edits an API key and can disable multi-group auto routing', async () => {
+    const primaryGroup = createGroup(10, 'OpenAI A', 'openai')
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        id: 2,
+        name: 'existing key',
+        group_id: 10,
+        group: primaryGroup,
+        routing_mode: 'auto',
+        auto_route_group_ids: [11],
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getAvailableGroups.mockResolvedValue([
+      primaryGroup,
+      createGroup(11, 'OpenAI B', 'openai'),
+    ])
+    const wrapper = await mountView({ renderDialog: true })
+
+    await getButtonByText(wrapper, 'Edit').trigger('click')
+    await nextTick()
+
+    const candidates = wrapper.findAll('[data-test="auto-route-candidate"]')
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0].attributes('aria-pressed')).toBe('true')
+
+    await wrapper.get('[data-test="auto-routing-toggle"]').trigger('click')
+    await wrapper.get('form#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateKeyRequest).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({
+        group_id: 10,
+        routing_mode: 'fixed',
+        auto_route_group_ids: [],
+      })
     )
   })
 })
