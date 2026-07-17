@@ -183,16 +183,14 @@ func (r *APIKeyAutoRouter) schedulableModelCandidates(ctx context.Context, group
 		if !acc.IsSchedulable() {
 			continue
 		}
-		if acc.Platform != group.Platform && !(acc.IsMixedSchedulingEnabled() && (group.Platform == PlatformAnthropic || group.Platform == PlatformGemini)) {
-			continue
+		if acc.Platform != group.Platform {
+			if !acc.IsMixedSchedulingEnabled() || (group.Platform != PlatformAnthropic && group.Platform != PlatformGemini) {
+				continue
+			}
 		}
 		if requestedModel == "" || acc.IsModelSupported(requestedModel) {
 			out = append(out, *acc)
 		}
 	}
 	return out
-}
-
-func (r *APIKeyAutoRouter) groupHasSchedulableModelCandidate(ctx context.Context, group *Group, requestedModel string) bool {
-	return len(r.schedulableModelCandidates(ctx, group, requestedModel, APIKeyAutoRouteOptions{})) > 0
 }

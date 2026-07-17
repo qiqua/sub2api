@@ -386,15 +386,15 @@ func sanitizeOpenAIAccountScheduleFailureKind(kind string) string {
 	var b strings.Builder
 	for _, r := range kind {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
+			b.WriteByte(byte(r))
 			continue
 		}
 		if r == '_' || r == '-' || r == '.' {
-			b.WriteRune('_')
+			b.WriteByte('_')
 			continue
 		}
 		if b.Len() > 0 {
-			b.WriteRune('_')
+			b.WriteByte('_')
 		}
 	}
 	return strings.Trim(b.String(), "_")
