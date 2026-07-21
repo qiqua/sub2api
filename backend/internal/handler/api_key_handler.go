@@ -48,16 +48,16 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest represents the update API key request payload
 type UpdateAPIKeyRequest struct {
-	Name              string   `json:"name"`
-	GroupID           *int64   `json:"group_id"`
-	RoutingMode       *string  `json:"routing_mode"`
-	AutoRouteGroupIDs *[]int64 `json:"auto_route_group_ids"`
-	Status            string   `json:"status" binding:"omitempty,oneof=active inactive"`
-	IPWhitelist       []string `json:"ip_whitelist"`
-	IPBlacklist       []string `json:"ip_blacklist"`
-	Quota             *float64 `json:"quota"`
-	ExpiresAt         *string  `json:"expires_at"`
-	ResetQuota        *bool    `json:"reset_quota"`
+	Name              string    `json:"name"`
+	GroupID           *int64    `json:"group_id"`
+	RoutingMode       *string   `json:"routing_mode"`
+	AutoRouteGroupIDs *[]int64  `json:"auto_route_group_ids"`
+	Status            string    `json:"status" binding:"omitempty,oneof=active inactive"`
+	IPWhitelist       *[]string `json:"ip_whitelist"` // nil = no change, empty array = clear
+	IPBlacklist       *[]string `json:"ip_blacklist"` // nil = no change, empty array = clear
+	Quota             *float64  `json:"quota"`
+	ExpiresAt         *string   `json:"expires_at"`
+	ResetQuota        *bool     `json:"reset_quota"`
 
 	// Rate limit fields (nil = no change, 0 = unlimited)
 	RateLimit5h         *float64 `json:"rate_limit_5h"`
