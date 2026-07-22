@@ -2,11 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -141,19 +143,66 @@ func resolvePageImagePath(pagesDir, imagesDir, filename string) (string, bool) {
 		return "", false
 	}
 
-	realPagesDir, err := filepath.EvalSymlinks(cleanedPagesDir)
+	realPagesDir, err := evalPageImageSymlinks(cleanedPagesDir)
 	if err != nil {
 		return "", false
 	}
-	realImagesDir, err := filepath.EvalSymlinks(cleanedImagesDir)
+	realImagesDir, err := evalPageImageSymlinks(cleanedImagesDir)
 	if err != nil || !isPathWithinBase(realImagesDir, realPagesDir) {
 		return "", false
 	}
-	realTarget, err := filepath.EvalSymlinks(cleanedTarget)
+	realTarget, err := evalPageImageSymlinks(cleanedTarget)
 	if err != nil || !isPathWithinBase(realTarget, realImagesDir) {
 		return "", false
 	}
 	return realTarget, true
+}
+
+var errPageImageSymlinkComponent = errors.New("page image path contains symlink component")
+
+func evalPageImageSymlinks(path string) (string, error) {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return realPath, nil
+	}
+	if runtime.GOOS != "windows" || !errors.Is(err, os.ErrPermission) {
+		return "", err
+	}
+	if err := ensureNoSymlinkComponent(filepath.Clean(path)); err != nil {
+		return "", err
+	}
+	return filepath.Abs(filepath.Clean(path))
+}
+
+func ensureNoSymlinkComponent(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	volume := filepath.VolumeName(absPath)
+	rest := strings.TrimPrefix(absPath, volume)
+	current := volume
+	separator := string(filepath.Separator)
+	if strings.HasPrefix(rest, separator) {
+		current += separator
+		rest = strings.TrimPrefix(rest, separator)
+	}
+
+	for _, part := range strings.Split(rest, separator) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errPageImageSymlinkComponent
+		}
+	}
+	return nil
 }
 
 func cleanPageImageRelativePath(filename string) (string, bool) {
