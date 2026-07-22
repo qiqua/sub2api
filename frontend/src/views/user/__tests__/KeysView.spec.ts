@@ -620,4 +620,40 @@ describe('user KeysView column settings', () => {
       auto_route_group_ids: [11],
     })
   })
+
+  it('saves immediately when selecting a primary group from the inline selector', async () => {
+    const primaryGroup = createGroup(10, 'OpenAI A', 'openai')
+    const nextGroup = createGroup(11, 'OpenAI B', 'openai')
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        id: 4,
+        name: 'quick group key',
+        group_id: 10,
+        group: primaryGroup,
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getAvailableGroups.mockResolvedValue([primaryGroup, nextGroup])
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="group-selector-trigger"]').trigger('click')
+    await nextTick()
+    const primaryOptions = wrapper.findAll('[data-test="quick-primary-group"]')
+    expect(primaryOptions).toHaveLength(2)
+
+    await primaryOptions[1].trigger('click')
+    await flushPromises()
+
+    expect(updateKeyRequest).toHaveBeenCalledWith(4, {
+      group_id: 11,
+      routing_mode: 'fixed',
+      auto_route_group_ids: [],
+    })
+    expect(showSuccess).toHaveBeenCalledWith('keys.groupChangedSuccess')
+    expect(wrapper.find('[data-test="quick-group-save"]').exists()).toBe(false)
+  })
 })

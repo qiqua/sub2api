@@ -1181,8 +1181,10 @@
               type="button"
               data-test="quick-primary-group"
               @click="selectQuickPrimaryGroup(option.value)"
+              :disabled="quickGroupSaving"
               :class="[
                 'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
+                quickGroupSaving ? 'cursor-wait opacity-70' : '',
                 quickGroupPrimaryID === option.value
                   ? 'bg-primary-50 dark:bg-primary-900/20'
                   : 'hover:bg-gray-100 dark:hover:bg-dark-700'
@@ -1293,6 +1295,7 @@
             data-test="quick-group-save"
             class="btn btn-primary btn-sm"
             @click="saveQuickGroupSelector"
+            :disabled="quickGroupSaving"
           >
             {{ t('common.save') }}
           </button>
@@ -1493,6 +1496,7 @@ const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const quickGroupPrimaryID = ref<number | null>(null)
+const quickGroupSaving = ref(false)
 const quickGroupAutoRoutingEnabled = ref(false)
 const quickGroupAutoRouteGroupIDs = ref<number[]>([])
 const publicSettings = ref<PublicSettings | null>(null)
@@ -1756,9 +1760,15 @@ const toggleQuickAutoRouting = () => {
   }
 }
 
-const selectQuickPrimaryGroup = (groupID: number) => {
+const selectQuickPrimaryGroup = async (groupID: number) => {
+  if (quickGroupSaving.value) return
   quickGroupPrimaryID.value = groupID
+  // 主分组点击就是“快速切换固定分组”：立即保存并清空自动路由候选。
+  // 多分组负载均衡仍通过下方开关/候选分组选择后点保存配置。
+  quickGroupAutoRoutingEnabled.value = false
+  quickGroupAutoRouteGroupIDs.value = []
   sanitizeQuickAutoRouteSelection()
+  await saveQuickGroupSelector()
 }
 
 const copyToClipboard = async (text: string, keyId: number) => {
@@ -1971,6 +1981,7 @@ const closeQuickGroupSelector = () => {
 }
 
 const saveQuickGroupSelector = async () => {
+  if (quickGroupSaving.value) return
   const key = selectedKeyForGroup.value
   if (!key || quickGroupPrimaryID.value === null) {
     appStore.showError(t('keys.groupRequired'))
@@ -1993,6 +2004,7 @@ const saveQuickGroupSelector = async () => {
   }
 
   try {
+    quickGroupSaving.value = true
     await keysAPI.update(key.id, {
       group_id: quickGroupPrimaryID.value,
       routing_mode: routingMode,
@@ -2003,6 +2015,8 @@ const saveQuickGroupSelector = async () => {
     loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToChangeGroup'))
+  } finally {
+    quickGroupSaving.value = false
   }
 }
 
