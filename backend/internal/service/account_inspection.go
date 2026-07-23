@@ -1026,7 +1026,7 @@ func isAccountInspectionInfraError(err error) bool {
 		return false
 	}
 	lower := strings.ToLower(err.Error())
-	return containsAny(lower,
+	return accountHealthContainsAny(lower,
 		"context deadline exceeded",
 		"connection refused",
 		"server misbehaving",

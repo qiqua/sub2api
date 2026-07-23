@@ -41,25 +41,25 @@ func ClassifyAccountHealthCheckError(testStatus, errMsg string) (status, categor
 	httpStatus = extractAccountHealthHTTPStatus(lower)
 	errorCode = extractAccountHealthErrorCode(lower)
 
-	if containsAny(lower, "insufficient_quota", "insufficient quota", "quota exhausted", "quota_exhausted", "quota exceeded", "quota_exceeded", "check quota", "usage limit", "usage_limit", "credit", "credits", "billing hard limit", "billing_hard_limit") {
+	if accountHealthContainsAny(lower, "insufficient_quota", "insufficient quota", "quota exhausted", "quota_exhausted", "quota exceeded", "quota_exceeded", "check quota", "usage limit", "usage_limit", "credit", "credits", "billing hard limit", "billing_hard_limit") {
 		return AccountHealthStatusRateLimited, AccountHealthCategoryQuotaExhausted, httpStatus, errorCode
 	}
-	if httpStatus == http.StatusPaymentRequired || containsAny(lower, "payment required", "payment_required", "billing required", "billing_required") {
+	if httpStatus == http.StatusPaymentRequired || accountHealthContainsAny(lower, "payment required", "payment_required", "billing required", "billing_required") {
 		return AccountHealthStatusUnavailable, AccountHealthCategoryPaymentRequired, httpStatus, errorCode
 	}
-	if httpStatus == http.StatusTooManyRequests || containsAny(lower, "rate_limit", "rate limit", "too many requests", "ratelimited", "rate-limited") {
+	if httpStatus == http.StatusTooManyRequests || accountHealthContainsAny(lower, "rate_limit", "rate limit", "too many requests", "ratelimited", "rate-limited") {
 		return AccountHealthStatusRateLimited, AccountHealthCategoryRateLimited, httpStatus, errorCode
 	}
-	if containsAny(lower, "no access token available", "no api key available", "missing refresh token", "missing api key", "api key is required", "credential is required", "credentials are required", "unsupported account", "unsupported platform") {
+	if accountHealthContainsAny(lower, "no access token available", "no api key available", "missing refresh token", "missing api key", "api key is required", "credential is required", "credentials are required", "unsupported account", "unsupported platform") {
 		return AccountHealthStatusUnavailable, AccountHealthCategoryConfigError, httpStatus, errorCode
 	}
-	if httpStatus == http.StatusUnauthorized || httpStatus == http.StatusForbidden || containsAny(lower, "invalid token", "invalid_refresh_token", "refresh_token_invalid", "refresh token invalid", "refresh_token_expired", "refresh token expired", "refresh_token_reused", "invalid_grant", "invalid_client", "invalid api key", "unauthorized", "unauthorized_client", "unauthenticated", "forbidden", "access_denied", "access denied", "authentication failed", "permission denied", "permission_denied") {
+	if httpStatus == http.StatusUnauthorized || httpStatus == http.StatusForbidden || accountHealthContainsAny(lower, "invalid token", "invalid_refresh_token", "refresh_token_invalid", "refresh token invalid", "refresh_token_expired", "refresh token expired", "refresh_token_reused", "invalid_grant", "invalid_client", "invalid api key", "unauthorized", "unauthorized_client", "unauthenticated", "forbidden", "access_denied", "access denied", "authentication failed", "permission denied", "permission_denied") {
 		return AccountHealthStatusUnavailable, AccountHealthCategoryAuthInvalid, httpStatus, errorCode
 	}
-	if containsAny(lower, "model not found", "unsupported model", "invalid model", "model_not_found") || (httpStatus == http.StatusNotFound && strings.Contains(lower, "model")) {
+	if accountHealthContainsAny(lower, "model not found", "unsupported model", "invalid model", "model_not_found") || (httpStatus == http.StatusNotFound && strings.Contains(lower, "model")) {
 		return AccountHealthStatusUnavailable, AccountHealthCategoryModelError, httpStatus, errorCode
 	}
-	if containsAny(lower, "proxy", "connection refused", "connect: refused", "deadline exceeded", "timeout", "no such host", "tls", "certificate", "network is unreachable", "eof") {
+	if accountHealthContainsAny(lower, "proxy", "connection refused", "connect: refused", "deadline exceeded", "timeout", "no such host", "tls", "certificate", "network is unreachable", "eof") {
 		return AccountHealthStatusUnavailable, AccountHealthCategoryProxyError, httpStatus, errorCode
 	}
 	if httpStatus == http.StatusInternalServerError ||
@@ -67,7 +67,7 @@ func ClassifyAccountHealthCheckError(testStatus, errMsg string) (status, categor
 		httpStatus == http.StatusServiceUnavailable ||
 		httpStatus == http.StatusGatewayTimeout ||
 		httpStatus == 529 ||
-		containsAny(lower, "upstream", "server error", "temporarily unavailable", "overloaded", "bad gateway") {
+		accountHealthContainsAny(lower, "upstream", "server error", "temporarily unavailable", "overloaded", "bad gateway") {
 		return AccountHealthStatusUnavailable, AccountHealthCategoryUpstreamError, httpStatus, errorCode
 	}
 
@@ -127,7 +127,7 @@ func extractAccountHealthErrorCode(lowerErr string) string {
 	return ""
 }
 
-func containsAny(s string, needles ...string) bool {
+func accountHealthContainsAny(s string, needles ...string) bool {
 	for _, needle := range needles {
 		if strings.Contains(s, needle) {
 			return true
