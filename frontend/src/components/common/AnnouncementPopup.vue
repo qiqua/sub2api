@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="popup-fade">
       <div
-        v-if="announcementStore.currentPopup"
+        v-if="displayedAnnouncement"
         class="fixed inset-0 z-[120] flex items-start justify-center overflow-y-auto bg-gradient-to-br from-black/70 via-black/60 to-black/70 p-3 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur-md sm:p-4 sm:pt-[8vh]"
       >
         <div
@@ -46,7 +46,7 @@
 
               <!-- Title -->
               <h2 class="mb-2 pr-12 text-xl font-bold leading-tight text-gray-900 dark:text-white sm:text-2xl">
-                {{ announcementStore.currentPopup.title }}
+                {{ displayedAnnouncement.title }}
               </h2>
 
               <!-- Time -->
@@ -54,7 +54,7 @@
                 <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <time>{{ formatRelativeWithDateTime(announcementStore.currentPopup.created_at) }}</time>
+                <time>{{ formatRelativeWithDateTime(displayedAnnouncement.created_at) }}</time>
               </div>
             </div>
           </div>
@@ -62,7 +62,7 @@
           <!-- Body -->
           <div class="min-h-0 flex-1 overflow-y-auto bg-white px-5 py-5 dark:bg-dark-800 sm:px-8 sm:py-8">
             <div class="relative">
-              <div class="absolute left-0 top-0 bottom-0 w-1 rounded-full bg-gradient-to-b from-amber-500 via-orange-500 to-yellow-500"></div>
+              <div class="absolute bottom-0 left-0 top-0 w-1 rounded-full bg-gradient-to-b from-amber-500 via-orange-500 to-yellow-500"></div>
               <div class="pl-6">
                 <div
                   class="markdown-body prose prose-sm max-w-none dark:prose-invert"
@@ -76,14 +76,18 @@
           <div class="shrink-0 border-t border-gray-100 bg-gray-50/50 px-5 py-4 dark:border-dark-700 dark:bg-dark-900/30 sm:px-8 sm:py-5">
             <div class="flex items-center justify-end">
               <button
+                data-testid="announcement-popup-dismiss"
+                class="rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-2.5 text-sm font-medium text-white shadow-lg shadow-amber-500/30 transition-all hover:scale-105 hover:shadow-xl"
                 @click="handleDismiss"
-                class="rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-2.5 text-sm font-medium text-white shadow-lg shadow-amber-500/30 transition-all hover:shadow-xl hover:scale-105"
               >
                 <span class="flex items-center gap-2">
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <svg v-if="preview" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
-                  {{ t('announcements.markRead') }}
+                  {{ preview ? t('common.close') : t('announcements.markRead') }}
                 </span>
               </button>
             </div>
@@ -102,10 +106,30 @@ import DOMPurify from 'dompurify'
 import { useAnnouncementStore } from '@/stores/announcements'
 import { formatRelativeWithDateTime } from '@/utils/format'
 import { acquireBodyScrollLock, releaseBodyScrollLock } from '@/composables/useBodyScrollLock'
+import type { Announcement, UserAnnouncement } from '@/types'
+import '@/styles/announcement-markdown.css'
+
+type PreviewAnnouncement = Pick<Announcement | UserAnnouncement, 'title' | 'content' | 'created_at'>
+
+const props = withDefaults(defineProps<{
+  announcement?: PreviewAnnouncement | null
+  preview?: boolean
+}>(), {
+  announcement: null,
+  preview: false,
+})
+
+const emit = defineEmits<{
+  close: []
+}>()
 
 const { t } = useI18n()
 const announcementStore = useAnnouncementStore()
 const bodyScrollLockToken = Symbol('AnnouncementPopup')
+
+const displayedAnnouncement = computed(() => (
+  props.preview ? props.announcement : announcementStore.currentPopup
+))
 
 marked.setOptions({
   breaks: true,
@@ -113,18 +137,22 @@ marked.setOptions({
 })
 
 const renderedContent = computed(() => {
-  const content = announcementStore.currentPopup?.content
+  const content = displayedAnnouncement.value?.content
   if (!content) return ''
   const html = marked.parse(content) as string
   return DOMPurify.sanitize(html)
 })
 
 function handleDismiss() {
+  if (props.preview) {
+    emit('close')
+    return
+  }
   announcementStore.dismissPopup()
 }
 
 function handleEscape(event: KeyboardEvent) {
-  if (event.key === 'Escape' && announcementStore.currentPopup) {
+  if (event.key === 'Escape' && displayedAnnouncement.value) {
     handleDismiss()
   }
 }
@@ -139,7 +167,7 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  () => announcementStore.currentPopup,
+  displayedAnnouncement,
   (popup) => {
     if (popup) {
       acquireBodyScrollLock(bodyScrollLockToken)
@@ -147,7 +175,7 @@ watch(
       releaseBodyScrollLock(bodyScrollLockToken)
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 </script>
 
