@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -236,8 +237,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	responseID := ""
 	imageCount := 0
 	var imageOutputSizes []string
+	reasoningEffortValue := ""
+	if reasoningEffort != nil {
+		reasoningEffortValue = *reasoningEffort
+	}
 	if reqStream {
-		result, err := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
+		result, err := s.handleStreamingResponsePassthroughWithReasoning(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel, reasoningEffortValue)
 		if err != nil {
 			return nil, err
 		}
@@ -968,15 +973,58 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiStreamingResultPassthrough, error) {
-	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	return s.handleStreamingResponsePassthroughWithReasoning(ctx, resp, c, account, startTime, originalModel, mappedModel, "")
+}
+
+func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithReasoning(
+	ctx context.Context,
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	startTime time.Time,
+	originalModel string,
+	mappedModel string,
+	reasoningEffort string,
+) (*openaiStreamingResultPassthrough, error) {
+	firstOutputTimeout := time.Duration(0)
+	if account != nil && account.Platform == PlatformOpenAI {
+		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
+	}
+	guardFirstOutput := firstOutputTimeout > 0
+	var attemptResponseHeaders http.Header
+	if guardFirstOutput {
+		attemptResponseHeaders = make(http.Header)
+		writeOpenAIPassthroughResponseHeaders(attemptResponseHeaders, resp.Header, s.responseHeaderFilter)
+		if v := strings.TrimSpace(resp.Header.Get("x-request-id")); v != "" {
+			attemptResponseHeaders.Set("x-request-id", v)
+		}
+	} else {
+		writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	}
 
 	// SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
-	if v := resp.Header.Get("x-request-id"); v != "" {
+	if v := resp.Header.Get("x-request-id"); !guardFirstOutput && v != "" {
 		c.Header("x-request-id", v)
+	}
+	applyAttemptResponseHeaders := func() {
+		if !guardFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() {
+			return
+		}
+		for key, values := range attemptResponseHeaders {
+			c.Writer.Header().Del(key)
+			for _, value := range values {
+				c.Writer.Header().Add(key, value)
+			}
+		}
+		// These are gateway-owned SSE headers and must win over upstream headers.
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
 	}
 
 	w := c.Writer
@@ -1027,6 +1075,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
+	var firstOutputScanGuard atomic.Bool
+	firstOutputScanGuard.Store(guardFirstOutput)
+	if guardFirstOutput {
+		scanner.Split(openAIFirstOutputDynamicScanLines(&firstOutputScanGuard))
+	}
 	defer putSSEScannerBuf64K(scanBuf)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 
@@ -1040,9 +1093,105 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			imageOutputSizes: imageCounter.Sizes(),
 		}
 	}
+	var firstOutputSeen atomic.Bool
+	var firstOutputTimeoutFired atomic.Bool
+	var firstOutputTimer *time.Timer
+	if firstOutputTimeout > 0 {
+		remaining := time.Until(startTime.Add(firstOutputTimeout))
+		if remaining <= 0 {
+			remaining = time.Nanosecond
+		}
+		firstOutputTimer = time.AfterFunc(remaining, func() {
+			if firstOutputSeen.Load() {
+				return
+			}
+			firstOutputTimeoutFired.Store(true)
+			_ = resp.Body.Close()
+		})
+		defer firstOutputTimer.Stop()
+	}
+	stopFirstOutputTimer := func() {
+		firstOutputSeen.Store(true)
+		firstOutputScanGuard.Store(false)
+		if firstOutputTimer == nil {
+			return
+		}
+		firstOutputTimer.Stop()
+	}
+	streamInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	var streamIntervalTimeoutFired atomic.Bool
+	var streamWatchActive atomic.Bool
+	var lastStreamReadAt int64
+	streamWatchDone := make(chan struct{})
+	defer close(streamWatchDone)
+	if streamInterval > 0 {
+		atomic.StoreInt64(&lastStreamReadAt, time.Now().UnixNano())
+		go func() {
+			ticker := time.NewTicker(streamInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if !streamWatchActive.Load() {
+						continue
+					}
+					lastReadAt := time.Unix(0, atomic.LoadInt64(&lastStreamReadAt))
+					if time.Since(lastReadAt) < streamInterval {
+						continue
+					}
+					streamIntervalTimeoutFired.Store(true)
+					_ = resp.Body.Close()
+					return
+				case <-streamWatchDone:
+					return
+				}
+			}
+		}()
+	}
+	markSemanticOutputStarted := func() {
+		stopFirstOutputTimer()
+		if streamInterval > 0 {
+			atomic.StoreInt64(&lastStreamReadAt, time.Now().UnixNano())
+			streamWatchActive.Store(true)
+		}
+	}
+	stopStreamWatch := func() {
+		streamWatchActive.Store(false)
+	}
+	errorEventSent := false
+	sendErrorEvent := func(reason string) {
+		if errorEventSent || clientDisconnected {
+			return
+		}
+		errorEventSent = true
+		if guardFirstOutput {
+			applyAttemptResponseHeaders()
+		}
+		if flushPending {
+			_, _ = fmt.Fprintln(w)
+		}
+		payload := `{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":` + strconv.Quote(reason) + `,"code":` + strconv.Quote(reason) + `}}`
+		if _, err := fmt.Fprintln(w, "data: "+payload); err != nil {
+			clientDisconnected = true
+			return
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			clientDisconnected = true
+			return
+		}
+		clientOutputStarted = true
+		flushPending = false
+		flusher.Flush()
+	}
 
 	for documentScanner.Scan() {
 		line := documentScanner.Text()
+		if streamWatchActive.Load() {
+			atomic.StoreInt64(&lastStreamReadAt, time.Now().UnixNano())
+		}
 		lineStartsClientOutput := false
 		forceFlushFailedEvent := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
@@ -1118,9 +1267,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			if trimmedData == "[DONE]" {
 				sawDone = true
+				stopStreamWatch()
 			}
 			if openAIStreamEventIsTerminal(trimmedData) {
 				sawTerminalEvent = true
+				stopStreamWatch()
 			}
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
@@ -1139,6 +1290,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if firstTokenMs == nil && lineStartsClientOutput && trimmedData != "[DONE]" {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
+				markSemanticOutputStarted()
 			}
 			s.parseSSEUsageBytes(dataBytes, usage)
 		}
@@ -1149,9 +1301,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				continue
 			}
 			if !clientOutputStarted && len(pendingLines) > 0 {
+				applyAttemptResponseHeaders()
 				if !writePendingLines() {
 					continue
 				}
+			}
+			if !clientOutputStarted && lineStartsClientOutput {
+				applyAttemptResponseHeaders()
 			}
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				clientDisconnected = true
@@ -1165,6 +1321,25 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 		}
 	}
+	if firstOutputTimeoutFired.Load() && firstTokenMs == nil {
+		return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
+			ctx, c, account, startTime, originalModel, reasoningEffort,
+			firstOutputTimeout, "semantic_output", resp.Header,
+		)
+	}
+	if streamIntervalTimeoutFired.Load() {
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+		if !clientDisconnected {
+			if streamInterval > 0 && s.rateLimitService != nil {
+				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
+			}
+			if clientOutputStarted {
+				sendErrorEvent("stream_timeout")
+			}
+		}
+		s.recordOpenAIProxyStreamDisconnect(account, errors.New("stream data interval timeout"), upstreamRequestID)
+		return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+	}
 	if err := documentScanner.Err(); err != nil {
 		if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
@@ -1173,11 +1348,22 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if sawFailedEvent {
 			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 		}
+		if errors.Is(err, errOpenAIFirstOutputScannerLimit) && firstTokenMs == nil {
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] SSE token exceeded guarded first-output limit: account=%d limit=%d error=%v", account.ID, openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance, err)
+			failoverErr := s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, nil, "OpenAI SSE line exceeds guarded first-output limit")
+			failoverErr.SafeToFailoverAfterWrite = true
+			return resultWithUsage(), failoverErr
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 		}
 		if errors.Is(err, bufio.ErrTooLong) {
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, err)
+			if guardFirstOutput && firstTokenMs == nil {
+				failoverErr := s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, nil, "OpenAI SSE line exceeds guarded first-output limit")
+				failoverErr.SafeToFailoverAfterWrite = true
+				return resultWithUsage(), failoverErr
+			}
 			return resultWithUsage(), err
 		}
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) {

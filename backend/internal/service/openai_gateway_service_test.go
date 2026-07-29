@@ -2003,6 +2003,136 @@ func TestOpenAIStreamingPassthroughMissingTerminalEventReturnsIncompleteError(t 
 	}
 }
 
+func TestOpenAIStreamingPassthroughFirstOutputTimeoutKeepsAttemptHeadersPrivate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize:                     defaultMaxLineSize,
+			OpenAIFirstOutputTimeoutSeconds: 1,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	pr, pw := io.Pipe()
+	defer func() { _ = pw.Close() }()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{"X-Request-Id": []string{"rid-slow-attempt"}},
+	}
+
+	_, err := svc.handleStreamingResponsePassthrough(
+		c.Request.Context(),
+		resp,
+		c,
+		&Account{ID: 91, Platform: PlatformOpenAI, Name: "slow"},
+		time.Now().Add(-2*time.Second),
+		"gpt-5.6",
+		"gpt-5.6",
+	)
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusGatewayTimeout, failoverErr.StatusCode)
+	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+	require.Empty(t, rec.Header().Get("X-Request-Id"))
+}
+
+func TestOpenAIStreamingPassthroughFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize:                     defaultMaxLineSize,
+			OpenAIFirstOutputTimeoutSeconds: 1,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_fast"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"ok"}`,
+			"",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"id":"resp_fast","usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-fast-attempt"}},
+	}
+
+	result, err := svc.handleStreamingResponsePassthrough(
+		c.Request.Context(),
+		resp,
+		c,
+		&Account{ID: 92, Platform: PlatformOpenAI, Name: "fast"},
+		time.Now(),
+		"gpt-5.6",
+		"gpt-5.6",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.firstTokenMs)
+	require.Contains(t, rec.Body.String(), `"delta":"ok"`)
+	require.Equal(t, "rid-fast-attempt", rec.Header().Get("X-Request-Id"))
+}
+
+func TestOpenAIStreamingPassthroughStreamIntervalTimeoutAfterOutputDoesNotFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize:               defaultMaxLineSize,
+			StreamDataIntervalTimeout: 1,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	pr, pw := io.Pipe()
+	defer func() { _ = pw.Close() }()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{"X-Request-Id": []string{"rid-stream-watchdog"}},
+	}
+
+	go func() {
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"))
+	}()
+
+	_, err := svc.handleStreamingResponsePassthrough(
+		c.Request.Context(),
+		resp,
+		c,
+		&Account{ID: 93, Platform: PlatformOpenAI, Name: "stall-after-output"},
+		time.Now(),
+		"gpt-5.6",
+		"gpt-5.6",
+	)
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.Contains(t, err.Error(), "stream data interval timeout")
+	require.Contains(t, rec.Body.String(), "partial")
+	require.Contains(t, rec.Body.String(), "stream_timeout")
+}
+
 func TestOpenAIStreamingPassthroughPostOutputDisconnectQuarantinesSharedProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	proxyID := int64(4698)
