@@ -773,8 +773,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		reasoningEffortValue = *reasoningEffort
 	}
 	firstOutputTimeout := time.Duration(0)
+	firstOutputDeadline := time.Time{}
+	firstOutputAttemptWait := time.Duration(0)
 	if reqStream && account.Platform == PlatformOpenAI {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffortValue)
+		if firstOutputTimeout > 0 {
+			firstOutputDeadline, firstOutputAttemptWait = s.openAIFirstOutputAttemptDeadline(c, startTime, firstOutputTimeout)
+		}
 	}
 
 	httpInvalidEncryptedContentRetryTried := false
@@ -786,7 +791,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		var headerGuard *openAIFirstOutputHeaderGuard
 		if firstOutputTimeout > 0 {
 			upstreamCtx, headerGuard = newOpenAIFirstOutputHeaderGuard(
-				upstreamCtx, releaseUpstreamCtx, startTime.Add(firstOutputTimeout),
+				upstreamCtx, releaseUpstreamCtx, firstOutputDeadline,
 			)
 		}
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
@@ -817,7 +822,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			headerGuard.close()
 			return nil, s.newOpenAIFirstOutputTimeoutError(
 				ctx, c, account, startTime, originalModel, reasoningEffortValue,
-				firstOutputTimeout, "response_headers", nil,
+				firstOutputAttemptWait, "response_headers", nil,
 			)
 		}
 		if err != nil {

@@ -92,7 +92,7 @@ type grokMediaEligibilityProber interface {
 	ProbeMediaEligibility(ctx context.Context, accountID int64) (bool, string, error)
 }
 
-const maxOpenAIFirstOutputTimeoutSwitches = 2
+const maxOpenAIFirstOutputTimeoutSwitches = 1
 
 func openAIForwardSucceededForScheduling(result *service.OpenAIForwardResult) bool {
 	return result.SucceededForScheduling()
@@ -436,6 +436,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
 	firstOutputTimeoutSwitchCount := 0
+	attemptIndex := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
@@ -457,7 +458,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			return
 		}
 		// Select account supporting the requested model
-		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		reqLog.Debug("openai.account_selecting",
+			zap.Int("attempt_index", attemptIndex),
+			zap.Int("excluded_account_count", len(failedAccountIDs)),
+		)
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(),
 			apiKey.GroupID,
@@ -534,6 +538,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// Forward request
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
+		service.SetOpenAIFirstOutputAttemptContext(c, requestStart, attemptIndex)
 		// 用扣除 compact 心跳字节的口径快照：心跳注释不构成语义响应，
 		// 不能因心跳字节变化而放弃 failover 换号（#3887）。
 		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
@@ -555,6 +560,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
+		cumulativeWaitMs := time.Since(requestStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
 		if upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
@@ -569,6 +575,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				reqLog.Warn("openai.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
 					zap.Int("image_count", result.ImageCount),
+					zap.Int("attempt_index", attemptIndex),
+					zap.Int64("attempt_wait_ms", forwardDurationMs),
+					zap.Int64("cumulative_wait_ms", cumulativeWaitMs),
 					zap.Error(err),
 				)
 			} else {
@@ -607,6 +616,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 							reqLog.Warn("openai.pool_mode_same_account_retry",
 								zap.Int64("account_id", account.ID),
 								zap.Int("upstream_status", failoverErr.StatusCode),
+								zap.Int("attempt_index", attemptIndex),
+								zap.Int64("attempt_wait_ms", forwardDurationMs),
+								zap.Int64("cumulative_wait_ms", cumulativeWaitMs),
+								zap.String("retry_reason", openAIUpstreamFailoverSwitchReason(failoverErr)),
 								zap.Int("retry_limit", retryLimit),
 								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
 							)
@@ -615,6 +628,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 								return
 							case <-time.After(sameAccountRetryDelay):
 							}
+							attemptIndex++
 							continue
 						}
 					}
@@ -626,6 +640,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 					switchCount++
+					attemptIndex++
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
@@ -633,6 +648,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					failoverSwitchFields := []zap.Field{
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),
+						zap.Int("attempt_index", attemptIndex-1),
+						zap.Int64("attempt_wait_ms", forwardDurationMs),
+						zap.Int64("cumulative_wait_ms", cumulativeWaitMs),
+						zap.String("switch_reason", openAIUpstreamFailoverSwitchReason(failoverErr)),
 						zap.Int("switch_count", switchCount),
 						zap.Int("max_switches", maxAccountSwitches),
 					}
@@ -657,6 +676,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				}
 				fields := []zap.Field{
 					zap.Int64("account_id", account.ID),
+					zap.Int("attempt_index", attemptIndex),
+					zap.Int64("attempt_wait_ms", forwardDurationMs),
+					zap.Int64("cumulative_wait_ms", cumulativeWaitMs),
 					zap.Bool("fallback_error_response_written", wroteFallback),
 					zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
 					zap.Error(err),
@@ -720,10 +742,42 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		})
 		reqLog.Debug("openai.request_completed",
 			zap.Int64("account_id", account.ID),
+			zap.Int("attempt_index", attemptIndex),
 			zap.Int("switch_count", switchCount),
+			zap.Int64("attempt_wait_ms", forwardDurationMs),
+			zap.Int64("cumulative_wait_ms", cumulativeWaitMs),
 		)
 		return
 	}
+}
+
+func openAIUpstreamFailoverSwitchReason(failoverErr *service.UpstreamFailoverError) string {
+	if failoverErr == nil {
+		return "unknown"
+	}
+	body := strings.ToLower(string(failoverErr.ResponseBody))
+	if failoverErr.StatusCode == http.StatusGatewayTimeout && strings.Contains(body, "first_output_timeout") {
+		return "first_output_timeout"
+	}
+	if failoverErr.StatusCode == http.StatusUnauthorized {
+		return "unauthorized"
+	}
+	if failoverErr.StatusCode == http.StatusForbidden {
+		return "forbidden"
+	}
+	if failoverErr.StatusCode == http.StatusTooManyRequests {
+		return "rate_limited"
+	}
+	if failoverErr.StatusCode == http.StatusPaymentRequired || strings.Contains(body, "insufficient") || strings.Contains(body, "quota") || strings.Contains(body, "credit") {
+		return "quota_or_balance"
+	}
+	if failoverErr.StatusCode == http.StatusGatewayTimeout {
+		return "gateway_timeout"
+	}
+	if failoverErr.StatusCode >= http.StatusInternalServerError {
+		return "upstream_5xx"
+	}
+	return "upstream_error"
 }
 
 func isOpenAIRemoteCompactPath(c *gin.Context) bool {

@@ -184,23 +184,67 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		c.Set("openai_passthrough", true)
 	}
 
+	reasoningEffortValue := ""
+	if reasoningEffort != nil {
+		reasoningEffortValue = *reasoningEffort
+	}
+	firstOutputTimeout := time.Duration(0)
+	firstOutputDeadline := time.Time{}
+	firstOutputAttemptWait := time.Duration(0)
+	if reqStream && account != nil && account.Platform == PlatformOpenAI {
+		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffortValue)
+		if firstOutputTimeout > 0 {
+			firstOutputDeadline, firstOutputAttemptWait = s.openAIFirstOutputAttemptDeadline(c, startTime, firstOutputTimeout)
+		}
+	}
+
 	agentTaskRecoveryTried := false
 	var resp *http.Response
 	for {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		var headerGuard *openAIFirstOutputHeaderGuard
+		if firstOutputTimeout > 0 {
+			upstreamCtx, headerGuard = newOpenAIFirstOutputHeaderGuard(
+				upstreamCtx, releaseUpstreamCtx, firstOutputDeadline,
+			)
+		}
 		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
-		releaseUpstreamCtx()
+		if headerGuard == nil {
+			releaseUpstreamCtx()
+		}
 		if buildErr != nil {
+			if headerGuard != nil {
+				headerGuard.close()
+			}
 			return nil, buildErr
 		}
 
 		upstreamStart := time.Now()
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		if headerGuard != nil && headerGuard.stopHeaderWait() {
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			headerGuard.close()
+			return nil, s.newOpenAIFirstOutputTimeoutError(
+				ctx, c, account, startTime, reqModel, reasoningEffortValue,
+				firstOutputAttemptWait, "response_headers", nil,
+			)
+		}
 		if err != nil {
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			if headerGuard != nil {
+				headerGuard.close()
+			}
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account.
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
+		}
+		if headerGuard != nil {
+			resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: headerGuard.close}
 		}
 		if resp.StatusCode < 400 {
 			break
@@ -237,10 +281,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	responseID := ""
 	imageCount := 0
 	var imageOutputSizes []string
-	reasoningEffortValue := ""
-	if reasoningEffort != nil {
-		reasoningEffortValue = *reasoningEffort
-	}
 	if reqStream {
 		result, err := s.handleStreamingResponsePassthroughWithReasoning(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel, reasoningEffortValue)
 		if err != nil {
@@ -987,8 +1027,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithReasoning(
 	reasoningEffort string,
 ) (*openaiStreamingResultPassthrough, error) {
 	firstOutputTimeout := time.Duration(0)
+	firstOutputDeadline := time.Time{}
+	firstOutputAttemptWait := time.Duration(0)
 	if account != nil && account.Platform == PlatformOpenAI {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
+		if firstOutputTimeout > 0 {
+			firstOutputDeadline, firstOutputAttemptWait = s.openAIFirstOutputAttemptDeadline(c, startTime, firstOutputTimeout)
+		}
 	}
 	guardFirstOutput := firstOutputTimeout > 0
 	var attemptResponseHeaders http.Header
@@ -1043,6 +1088,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithReasoning(
 	sawFailedEvent := false
 	failedMessage := ""
 	clientOutputStarted := false
+	firstOutputEventInProgress := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
@@ -1097,7 +1143,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithReasoning(
 	var firstOutputTimeoutFired atomic.Bool
 	var firstOutputTimer *time.Timer
 	if firstOutputTimeout > 0 {
-		remaining := time.Until(startTime.Add(firstOutputTimeout))
+		remaining := time.Until(firstOutputDeadline)
 		if remaining <= 0 {
 			remaining = time.Nanosecond
 		}
@@ -1151,12 +1197,23 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithReasoning(
 			}
 		}()
 	}
+	markStreamWatchActive := func() {
+		if streamInterval <= 0 {
+			return
+		}
+		atomic.StoreInt64(&lastStreamReadAt, time.Now().UnixNano())
+		streamWatchActive.Store(true)
+	}
+	markFirstUpstreamSSESeen := func() {
+		if firstOutputSeen.Load() {
+			return
+		}
+		stopFirstOutputTimer()
+		markStreamWatchActive()
+	}
 	markSemanticOutputStarted := func() {
 		stopFirstOutputTimer()
-		if streamInterval > 0 {
-			atomic.StoreInt64(&lastStreamReadAt, time.Now().UnixNano())
-			streamWatchActive.Store(true)
-		}
+		markStreamWatchActive()
 	}
 	stopStreamWatch := func() {
 		streamWatchActive.Store(false)
@@ -1189,6 +1246,14 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithReasoning(
 
 	for documentScanner.Scan() {
 		line := documentScanner.Text()
+		if guardFirstOutput {
+			if line != "" {
+				firstOutputEventInProgress = true
+			} else if firstOutputEventInProgress {
+				markFirstUpstreamSSESeen()
+				firstOutputEventInProgress = false
+			}
+		}
 		if streamWatchActive.Load() {
 			atomic.StoreInt64(&lastStreamReadAt, time.Now().UnixNano())
 		}
@@ -1316,15 +1381,21 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithReasoning(
 				clientOutputStarted = true
 				flushPending = true
 				if line == "" {
+					if guardFirstOutput {
+						markFirstUpstreamSSESeen()
+					}
 					flushPendingOutput()
 				}
 			}
 		}
 	}
-	if firstOutputTimeoutFired.Load() && firstTokenMs == nil {
+	if guardFirstOutput && firstOutputEventInProgress {
+		markFirstUpstreamSSESeen()
+	}
+	if firstOutputTimeoutFired.Load() && !firstOutputSeen.Load() {
 		return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
 			ctx, c, account, startTime, originalModel, reasoningEffort,
-			firstOutputTimeout, "semantic_output", resp.Header,
+			firstOutputAttemptWait, "first_sse_event", resp.Header,
 		)
 	}
 	if streamIntervalTimeoutFired.Load() {

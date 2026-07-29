@@ -17,6 +17,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 const (
@@ -25,6 +26,9 @@ const (
 	openAIFirstOutputScannerFramingAllowance = 64
 	openAIFirstOutputGuardQueueSize          = 1
 	openAIDefaultStreamQueueSize             = 16
+	openAIFirstOutputInitialAttemptBudget    = 10 * time.Second
+	openAIFirstOutputRequestStartKey         = "openai_first_output_request_start"
+	openAIFirstOutputAttemptIndexKey         = "openai_first_output_attempt_index"
 )
 
 var (
@@ -243,6 +247,85 @@ func (s *OpenAIGatewayService) openAIFirstOutputTimeout(reasoningEffort string) 
 	return time.Duration(seconds) * time.Second
 }
 
+// SetOpenAIFirstOutputAttemptContext binds request-level TTFT state to gin.Context.
+// The configured OpenAIFirstOutputTimeoutSeconds is treated as the total request
+// TTFT budget across account failover attempts. Attempt 0 is capped at 10s so a
+// slow first account does not consume the full request budget; later attempts use
+// only the remaining request budget.
+func SetOpenAIFirstOutputAttemptContext(c *gin.Context, requestStart time.Time, attemptIndex int) {
+	if c == nil {
+		return
+	}
+	if !requestStart.IsZero() {
+		c.Set(openAIFirstOutputRequestStartKey, requestStart)
+	}
+	if attemptIndex < 0 {
+		attemptIndex = 0
+	}
+	c.Set(openAIFirstOutputAttemptIndexKey, attemptIndex)
+}
+
+func openAIFirstOutputRequestStart(c *gin.Context, fallback time.Time) time.Time {
+	if c == nil {
+		return fallback
+	}
+	if value, ok := c.Get(openAIFirstOutputRequestStartKey); ok {
+		if t, ok := value.(time.Time); ok && !t.IsZero() {
+			return t
+		}
+	}
+	return fallback
+}
+
+func openAIFirstOutputAttemptIndex(c *gin.Context) int {
+	if c == nil {
+		return 0
+	}
+	if value, ok := c.Get(openAIFirstOutputAttemptIndexKey); ok {
+		switch v := value.(type) {
+		case int:
+			if v > 0 {
+				return v
+			}
+		case int64:
+			if v > 0 {
+				return int(v)
+			}
+		}
+	}
+	return 0
+}
+
+func (s *OpenAIGatewayService) openAIFirstOutputAttemptDeadline(c *gin.Context, attemptStart time.Time, totalBudget time.Duration) (time.Time, time.Duration) {
+	if totalBudget <= 0 {
+		return time.Time{}, 0
+	}
+	if attemptStart.IsZero() {
+		attemptStart = time.Now()
+	}
+	requestStart := openAIFirstOutputRequestStart(c, attemptStart)
+	if requestStart.IsZero() {
+		requestStart = attemptStart
+	}
+	totalDeadline := requestStart.Add(totalBudget)
+	deadline := totalDeadline
+	if openAIFirstOutputAttemptIndex(c) == 0 {
+		firstAttemptBudget := openAIFirstOutputInitialAttemptBudget
+		if totalBudget < firstAttemptBudget {
+			firstAttemptBudget = totalBudget
+		}
+		firstAttemptDeadline := attemptStart.Add(firstAttemptBudget)
+		if firstAttemptDeadline.Before(deadline) {
+			deadline = firstAttemptDeadline
+		}
+	}
+	wait := time.Until(deadline)
+	if wait <= 0 {
+		wait = time.Nanosecond
+	}
+	return deadline, wait
+}
+
 func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 	ctx context.Context,
 	c *gin.Context,
@@ -255,17 +338,33 @@ func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 	responseHeaders http.Header,
 ) *UpstreamFailoverError {
 	elapsed := time.Since(startTime)
+	requestStart := openAIFirstOutputRequestStart(c, startTime)
+	totalElapsed := time.Since(requestStart)
+	attemptIndex := openAIFirstOutputAttemptIndex(c)
 	logger.LegacyPrintf(
 		"service.openai_gateway",
-		"OpenAI first output timeout: account=%d model=%s effort=%s phase=%s elapsed=%s limit=%s",
-		account.ID, originalModel, reasoningEffort, phase, elapsed, timeout,
+		"OpenAI first output timeout: account=%d model=%s effort=%s phase=%s attempt_index=%d attempt_wait=%s total_wait=%s limit=%s",
+		account.ID, originalModel, reasoningEffort, phase, attemptIndex, elapsed, totalElapsed, timeout,
 	)
 	requestID := strings.TrimSpace(responseHeaders.Get("x-request-id"))
+	logger.FromContext(ctx).With(
+		zap.String("component", "service.openai_gateway"),
+		zap.Int64("account_id", account.ID),
+		zap.String("account_name", account.Name),
+		zap.String("model", strings.TrimSpace(originalModel)),
+		zap.String("reasoning_effort", strings.TrimSpace(reasoningEffort)),
+		zap.String("phase", strings.TrimSpace(phase)),
+		zap.Int("attempt_index", attemptIndex),
+		zap.Int64("attempt_wait_ms", elapsed.Milliseconds()),
+		zap.Int64("cumulative_wait_ms", totalElapsed.Milliseconds()),
+		zap.Int64("timeout_ms", timeout.Milliseconds()),
+		zap.String("upstream_request_id", requestID),
+	).Warn("openai.first_output_timeout")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
 		UpstreamStatusCode: http.StatusGatewayTimeout, UpstreamRequestID: requestID,
 		Kind: "first_output_timeout", Message: "OpenAI upstream produced no semantic output before the deadline",
-		Detail: fmt.Sprintf("phase=%s elapsed_ms=%d timeout_ms=%d", phase, elapsed.Milliseconds(), timeout.Milliseconds()),
+		Detail: fmt.Sprintf("phase=%s attempt_index=%d attempt_wait_ms=%d cumulative_wait_ms=%d timeout_ms=%d", phase, attemptIndex, elapsed.Milliseconds(), totalElapsed.Milliseconds(), timeout.Milliseconds()),
 	})
 	if s.rateLimitService != nil {
 		s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)

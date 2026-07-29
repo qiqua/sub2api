@@ -111,7 +111,7 @@ func TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream(t *tes
 	require.Contains(t, rec.Body.String(), "response.completed")
 }
 
-func TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader(t *testing.T) {
+func TestOpenAINativeFirstOutputTimeoutDisarmsAfterPreambleEventAndCleansReader(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
 		OpenAIFirstOutputTimeoutSeconds: 1,
 		MaxLineSize:                     defaultMaxLineSize,
@@ -136,19 +136,13 @@ func TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader(t *testing
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusGatewayTimeout, failoverErr.StatusCode)
-	require.Contains(t, string(failoverErr.ResponseBody), "first_output_timeout")
-	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.NotContains(t, string(failoverErr.ResponseBody), "first_output_timeout")
 	require.Empty(t, rec.Body.String())
-	select {
-	case <-body.closed:
-	default:
-		t.Fatal("first-output timeout did not close the upstream response body")
-	}
 	select {
 	case <-writerDone:
 	case <-time.After(time.Second):
-		t.Fatal("stream reader/writer goroutine did not exit after first-output timeout")
+		t.Fatal("stream reader/writer goroutine did not exit after preamble stream ended")
 	}
 }
 
@@ -162,6 +156,27 @@ func TestOpenAIFirstOutputTimeoutForReasoningEffort(t *testing.T) {
 	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("high"))
 	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("xhigh"))
 	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("max"))
+}
+
+func TestOpenAIFirstOutputAttemptDeadlineSharesTotalBudget(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	requestStart := time.Now()
+	firstAttemptStart := requestStart.Add(1 * time.Second)
+	SetOpenAIFirstOutputAttemptContext(c, requestStart, 0)
+
+	firstDeadline, firstWait := svc.openAIFirstOutputAttemptDeadline(c, firstAttemptStart, 25*time.Second)
+	require.Equal(t, firstAttemptStart.Add(openAIFirstOutputInitialAttemptBudget), firstDeadline)
+	require.Positive(t, firstWait)
+
+	secondAttemptStart := requestStart.Add(11 * time.Second)
+	SetOpenAIFirstOutputAttemptContext(c, requestStart, 1)
+
+	secondDeadline, secondWait := svc.openAIFirstOutputAttemptDeadline(c, secondAttemptStart, 25*time.Second)
+	require.Equal(t, requestStart.Add(25*time.Second), secondDeadline)
+	require.Positive(t, secondWait)
 }
 
 func TestOpenAIFirstOutputStageDefaultLimitIsIndependentFromScannerLimit(t *testing.T) {

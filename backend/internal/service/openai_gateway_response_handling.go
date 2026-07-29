@@ -44,8 +44,13 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 
 func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
 	firstOutputTimeout := time.Duration(0)
+	firstOutputDeadline := time.Time{}
+	firstOutputAttemptWait := time.Duration(0)
 	if account != nil && account.Platform == PlatformOpenAI {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
+		if firstOutputTimeout > 0 {
+			firstOutputDeadline, firstOutputAttemptWait = s.openAIFirstOutputAttemptDeadline(c, startTime, firstOutputTimeout)
+		}
 	}
 	guardFirstOutput := firstOutputTimeout > 0
 	var attemptResponseHeaders http.Header
@@ -179,7 +184,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var firstOutputTimer *time.Timer
 	var firstOutputCh <-chan time.Time
 	if firstOutputTimeout > 0 {
-		remaining := time.Until(startTime.Add(firstOutputTimeout))
+		remaining := time.Until(firstOutputDeadline)
 		if remaining <= 0 {
 			remaining = time.Nanosecond
 		}
@@ -199,6 +204,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		firstOutputTimer = nil
 		firstOutputCh = nil
+	}
+	firstUpstreamSSESeen := false
+	markFirstUpstreamSSESeen := func() {
+		if firstUpstreamSSESeen {
+			return
+		}
+		firstUpstreamSSESeen = true
+		stopFirstOutputTimer()
 	}
 	// Track downstream writes separately from upstream reads: pre-output failover
 	// can buffer response.created / response.in_progress, so keepalive must be
@@ -549,6 +562,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 		// A blank line dispatches a guarded event from the attempt-local stage.
 		if guardFirstOutput && line == "" {
+			markFirstUpstreamSSESeen()
 			if !clientDisconnected {
 				if _, err := writePendingString("\n"); err != nil {
 					handlePendingWriteError(err)
@@ -660,6 +674,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				if guardFirstOutput && eventInProgress {
 					// EOF dispatches the final SSE event even without a trailing blank
 					// line. Do not synthesize extra bytes on the downstream wire.
+					markFirstUpstreamSSESeen()
 					completeGuardedEvent(true)
 				}
 				return finalizeStream()
@@ -691,7 +706,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-firstOutputCh:
-			if firstTokenMs != nil {
+			if firstUpstreamSSESeen {
 				stopFirstOutputTimer()
 				continue
 			}
@@ -701,7 +716,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
 				ctx, c, account, startTime, originalModel, reasoningEffort,
-				firstOutputTimeout, "semantic_output", resp.Header,
+				firstOutputAttemptWait, "first_sse_event", resp.Header,
 			)
 
 		case <-keepaliveCh:
