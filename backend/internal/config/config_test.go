@@ -1682,7 +1682,7 @@ func TestValidateConfigErrors(t *testing.T) {
 		},
 		{
 			name:    "gateway openai first output timeout below minimum",
-			mutate:  func(c *Config) { c.Gateway.OpenAIFirstOutputTimeoutSeconds = 29 },
+			mutate:  func(c *Config) { c.Gateway.OpenAIFirstOutputTimeoutSeconds = 4 },
 			wantErr: "gateway.openai_first_output_timeout_seconds",
 		},
 		{

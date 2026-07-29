@@ -567,7 +567,7 @@ func TestOpenAINativeFirstOutputTimeoutDisabledPreservesKeepaliveFlush(t *testin
 	require.Contains(t, rec.Body.String(), "response.in_progress")
 }
 
-func TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepaliveCommit(t *testing.T) {
+func TestOpenAINativeFirstOutputFailoverSkipsPreOutputKeepaliveAndKeepsAttemptHeadersPrivate(t *testing.T) {
 	cfg := &config.Config{Gateway: config.GatewayConfig{
 		OpenAIFirstOutputTimeoutSeconds: 2,
 		StreamKeepaliveInterval:         1,
@@ -605,7 +605,7 @@ func TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepalive
 	_, firstErr := svc.handleStreamingResponse(c.Request.Context(), firstResp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, firstErr, &failoverErr)
-	require.Contains(t, rec.Body.String(), ":\n\n", "first attempt should have committed only a stable keepalive")
+	require.Empty(t, rec.Body.String(), "first attempt must not commit downstream bytes before semantic output")
 	require.NotContains(t, rec.Body.String(), "resp_first")
 
 	secondResp := &http.Response{
@@ -628,10 +628,10 @@ func TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepalive
 	require.NotNil(t, result)
 	require.Contains(t, rec.Body.String(), "resp_second")
 	wireHeaders := rec.Result().Header
-	require.Empty(t, wireHeaders.Values("X-Request-Id"))
-	require.Empty(t, wireHeaders.Values("X-Ratelimit-Remaining-Requests"))
-	require.Empty(t, rec.Header().Values("X-Request-Id"))
-	require.Empty(t, rec.Header().Values("X-Ratelimit-Remaining-Requests"))
+	require.NotContains(t, wireHeaders.Values("X-Request-Id"), "request-first")
+	require.NotContains(t, wireHeaders.Values("X-Ratelimit-Remaining-Requests"), "1")
+	require.NotContains(t, rec.Header().Values("X-Request-Id"), "request-first")
+	require.NotContains(t, rec.Header().Values("X-Ratelimit-Remaining-Requests"), "1")
 	select {
 	case <-firstWriterDone:
 	case <-time.After(time.Second):

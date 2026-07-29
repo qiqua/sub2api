@@ -714,6 +714,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if time.Since(lastDownstreamWriteAt) < keepaliveInterval {
 				continue
 			}
+			if guardFirstOutput && firstTokenMs == nil {
+				// Keep the current account attempt fully uncommitted until the first
+				// semantic SSE event arrives. Committing even a harmless SSE comment
+				// before first output makes the downstream HTTP response visible and
+				// weakens the "cancel slow account and retry another one" path.
+				//
+				// First-output failover deadlines are intentionally short, so skipping
+				// pre-output keepalive is safer than pinning the client to a slow
+				// upstream attempt.
+				continue
+			}
 			if guardFirstOutput {
 				// Bypass attempt-local buffered frames. The stable SSE headers may be
 				// committed here, but account headers remain private until semantic output.
