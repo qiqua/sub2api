@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -28,13 +29,37 @@ func TestOpenAIForwardMayFailoverOnlyAfterNonSemanticWrite(t *testing.T) {
 }
 
 func TestOpenAIFirstOutputFailoverStopsAfterOneAccountSwitch(t *testing.T) {
+	failoverErr := &service.UpstreamFailoverError{
+		StatusCode:               http.StatusGatewayTimeout,
+		ResponseBody:             []byte(`{"error":{"type":"first_output_timeout"}}`),
+		SafeToFailoverAfterWrite: true,
+	}
+	count := 0
+
+	require.False(t, openAIFirstOutputFailoverExhausted(failoverErr, &count, 1))
+	require.Equal(t, 1, count)
+	require.True(t, openAIFirstOutputFailoverExhausted(failoverErr, &count, 1))
+	require.Equal(t, 1, count)
+}
+
+func TestOpenAIFirstOutputFailoverDisabledByMaxSwitches(t *testing.T) {
+	failoverErr := &service.UpstreamFailoverError{
+		StatusCode:               http.StatusGatewayTimeout,
+		ResponseBody:             []byte(`{"error":{"type":"first_output_timeout"}}`),
+		SafeToFailoverAfterWrite: true,
+	}
+	count := 0
+
+	require.True(t, openAIFirstOutputFailoverExhausted(failoverErr, &count, 0))
+	require.Zero(t, count)
+}
+
+func TestOpenAIFirstOutputFailoverLimitIgnoresOtherSafeErrors(t *testing.T) {
 	failoverErr := &service.UpstreamFailoverError{SafeToFailoverAfterWrite: true}
 	count := 0
 
-	require.False(t, openAIFirstOutputFailoverExhausted(failoverErr, &count))
-	require.Equal(t, 1, count)
-	require.True(t, openAIFirstOutputFailoverExhausted(failoverErr, &count))
-	require.Equal(t, 1, count)
+	require.False(t, openAIFirstOutputFailoverExhausted(failoverErr, &count, 0))
+	require.Zero(t, count)
 }
 
 func TestOpenAIRequestAllowsFailoverReplayStopsCanceledClient(t *testing.T) {

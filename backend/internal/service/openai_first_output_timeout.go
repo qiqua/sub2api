@@ -21,14 +21,15 @@ import (
 )
 
 const (
-	openAIFirstOutputStageMemoryLimit        = 64 * 1024
-	openAIFirstOutputStageMaxBytes           = 8 * 1024 * 1024
-	openAIFirstOutputScannerFramingAllowance = 64
-	openAIFirstOutputGuardQueueSize          = 1
-	openAIDefaultStreamQueueSize             = 16
-	openAIFirstOutputInitialAttemptBudget    = 10 * time.Second
-	openAIFirstOutputRequestStartKey         = "openai_first_output_request_start"
-	openAIFirstOutputAttemptIndexKey         = "openai_first_output_attempt_index"
+	openAIFirstOutputStageMemoryLimit             = 64 * 1024
+	openAIFirstOutputStageMaxBytes                = 8 * 1024 * 1024
+	openAIFirstOutputScannerFramingAllowance      = 64
+	openAIFirstOutputGuardQueueSize               = 1
+	openAIDefaultStreamQueueSize                  = 16
+	defaultOpenAIFirstOutputInitialAttemptSeconds = 10
+	defaultOpenAIFirstOutputMaxSwitches           = 1
+	openAIFirstOutputRequestStartKey              = "openai_first_output_request_start"
+	openAIFirstOutputAttemptIndexKey              = "openai_first_output_attempt_index"
 )
 
 var (
@@ -234,7 +235,7 @@ func (s *openAIFirstOutputStage) Close() error {
 }
 
 func (s *OpenAIGatewayService) openAIFirstOutputTimeout(reasoningEffort string) time.Duration {
-	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIFirstOutputTimeoutSeconds <= 0 {
+	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIFirstOutputTimeoutSeconds <= 0 || !s.OpenAIFirstOutputFailoverEnabled() {
 		return 0
 	}
 	seconds := s.cfg.Gateway.OpenAIFirstOutputTimeoutSeconds
@@ -247,11 +248,55 @@ func (s *OpenAIGatewayService) openAIFirstOutputTimeout(reasoningEffort string) 
 	return time.Duration(seconds) * time.Second
 }
 
+func (s *OpenAIGatewayService) OpenAIFirstOutputFailoverEnabled() bool {
+	if s == nil || s.cfg == nil {
+		return true
+	}
+	return s.cfg.Gateway.OpenAIFirstOutputFailoverEnabled
+}
+
+func (s *OpenAIGatewayService) OpenAIFirstOutputMaxSwitches() int {
+	if s == nil || s.cfg == nil {
+		return defaultOpenAIFirstOutputMaxSwitches
+	}
+	switches := s.cfg.Gateway.OpenAIFirstOutputMaxSwitches
+	if switches < 0 {
+		return 0
+	}
+	if switches > 5 {
+		return 5
+	}
+	return switches
+}
+
+func (s *OpenAIGatewayService) openAIFirstOutputInitialAttemptBudget(totalBudget time.Duration) time.Duration {
+	if totalBudget <= 0 {
+		return 0
+	}
+	seconds := defaultOpenAIFirstOutputInitialAttemptSeconds
+	if s != nil && s.cfg != nil {
+		seconds = s.cfg.Gateway.OpenAIFirstOutputInitialAttemptTimeoutSeconds
+	}
+	if seconds <= 0 {
+		return 0
+	}
+	budget := time.Duration(seconds) * time.Second
+	if budget > totalBudget {
+		return totalBudget
+	}
+	return budget
+}
+
+func (s *OpenAIGatewayService) openAIFirstOutputPenalizeAccount() bool {
+	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIFirstOutputPenalizeAccount
+}
+
 // SetOpenAIFirstOutputAttemptContext binds request-level TTFT state to gin.Context.
 // The configured OpenAIFirstOutputTimeoutSeconds is treated as the total request
-// TTFT budget across account failover attempts. Attempt 0 is capped at 10s so a
-// slow first account does not consume the full request budget; later attempts use
-// only the remaining request budget.
+// TTFT budget across account failover attempts. Attempt 0 can be capped by
+// OpenAIFirstOutputInitialAttemptTimeoutSeconds so a slow first account does not
+// consume the full request budget; later attempts use only the remaining request
+// budget.
 func SetOpenAIFirstOutputAttemptContext(c *gin.Context, requestStart time.Time, attemptIndex int) {
 	if c == nil {
 		return
@@ -310,13 +355,11 @@ func (s *OpenAIGatewayService) openAIFirstOutputAttemptDeadline(c *gin.Context, 
 	totalDeadline := requestStart.Add(totalBudget)
 	deadline := totalDeadline
 	if openAIFirstOutputAttemptIndex(c) == 0 {
-		firstAttemptBudget := openAIFirstOutputInitialAttemptBudget
-		if totalBudget < firstAttemptBudget {
-			firstAttemptBudget = totalBudget
-		}
-		firstAttemptDeadline := attemptStart.Add(firstAttemptBudget)
-		if firstAttemptDeadline.Before(deadline) {
-			deadline = firstAttemptDeadline
+		if firstAttemptBudget := s.openAIFirstOutputInitialAttemptBudget(totalBudget); firstAttemptBudget > 0 {
+			firstAttemptDeadline := attemptStart.Add(firstAttemptBudget)
+			if firstAttemptDeadline.Before(deadline) {
+				deadline = firstAttemptDeadline
+			}
 		}
 	}
 	wait := time.Until(deadline)
@@ -347,6 +390,7 @@ func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 		account.ID, originalModel, reasoningEffort, phase, attemptIndex, elapsed, totalElapsed, timeout,
 	)
 	requestID := strings.TrimSpace(responseHeaders.Get("x-request-id"))
+	penalizeAccount := s.openAIFirstOutputPenalizeAccount()
 	logger.FromContext(ctx).With(
 		zap.String("component", "service.openai_gateway"),
 		zap.Int64("account_id", account.ID),
@@ -358,20 +402,21 @@ func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 		zap.Int64("attempt_wait_ms", elapsed.Milliseconds()),
 		zap.Int64("cumulative_wait_ms", totalElapsed.Milliseconds()),
 		zap.Int64("timeout_ms", timeout.Milliseconds()),
+		zap.Bool("penalize_account", penalizeAccount),
 		zap.String("upstream_request_id", requestID),
 	).Warn("openai.first_output_timeout")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
 		UpstreamStatusCode: http.StatusGatewayTimeout, UpstreamRequestID: requestID,
-		Kind: "first_output_timeout", Message: "OpenAI upstream produced no semantic output before the deadline",
+		Kind: "first_output_timeout", Message: "OpenAI upstream produced no SSE event before the deadline",
 		Detail: fmt.Sprintf("phase=%s attempt_index=%d attempt_wait_ms=%d cumulative_wait_ms=%d timeout_ms=%d", phase, attemptIndex, elapsed.Milliseconds(), totalElapsed.Milliseconds(), timeout.Milliseconds()),
 	})
-	if s.rateLimitService != nil {
+	if penalizeAccount && s.rateLimitService != nil {
 		s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 	}
 	return &UpstreamFailoverError{
 		StatusCode:      http.StatusGatewayTimeout,
-		ResponseBody:    []byte(`{"error":{"type":"first_output_timeout","message":"Upstream produced no output before the deadline"}}`),
+		ResponseBody:    []byte(`{"error":{"type":"first_output_timeout","message":"Upstream produced no SSE event before the deadline"}}`),
 		ResponseHeaders: responseHeaders.Clone(), SafeToFailoverAfterWrite: true,
 	}
 }

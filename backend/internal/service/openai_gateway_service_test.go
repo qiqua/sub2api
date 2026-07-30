@@ -2007,8 +2007,11 @@ func TestOpenAIStreamingPassthroughFirstOutputTimeoutKeepsAttemptHeadersPrivate(
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
-			MaxLineSize:                     defaultMaxLineSize,
-			OpenAIFirstOutputTimeoutSeconds: 1,
+			MaxLineSize:                                   defaultMaxLineSize,
+			OpenAIFirstOutputFailoverEnabled:              true,
+			OpenAIFirstOutputInitialAttemptTimeoutSeconds: 10,
+			OpenAIFirstOutputMaxSwitches:                  1,
+			OpenAIFirstOutputTimeoutSeconds:               1,
 		},
 	}
 	svc := &OpenAIGatewayService{cfg: cfg}
@@ -2048,8 +2051,11 @@ func TestOpenAIStreamingPassthroughFirstOutputTimeoutDisarmsAfterSemanticOutput(
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
-			MaxLineSize:                     defaultMaxLineSize,
-			OpenAIFirstOutputTimeoutSeconds: 1,
+			MaxLineSize:                                   defaultMaxLineSize,
+			OpenAIFirstOutputFailoverEnabled:              true,
+			OpenAIFirstOutputInitialAttemptTimeoutSeconds: 10,
+			OpenAIFirstOutputMaxSwitches:                  1,
+			OpenAIFirstOutputTimeoutSeconds:               1,
 		},
 	}
 	svc := &OpenAIGatewayService{cfg: cfg}

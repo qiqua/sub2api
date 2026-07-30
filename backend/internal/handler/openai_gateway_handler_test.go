@@ -2309,6 +2309,9 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 	cfg.Default.RateMultiplier = 1
 	cfg.Security.URLAllowlist.Enabled = false
 	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIFirstOutputFailoverEnabled = true
+	cfg.Gateway.OpenAIFirstOutputInitialAttemptTimeoutSeconds = 10
+	cfg.Gateway.OpenAIFirstOutputMaxSwitches = 1
 	cfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 1
 	cfg.Gateway.OpenAIWS.Enabled = true
 	cfg.Gateway.OpenAIWS.APIKeyEnabled = true

@@ -92,8 +92,6 @@ type grokMediaEligibilityProber interface {
 	ProbeMediaEligibility(ctx context.Context, accountID int64) (bool, string, error)
 }
 
-const maxOpenAIFirstOutputTimeoutSwitches = 1
-
 func openAIForwardSucceededForScheduling(result *service.OpenAIForwardResult) bool {
 	return result.SucceededForScheduling()
 }
@@ -434,6 +432,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	requireCompact := isOpenAIRemoteCompactPath(c)
 
 	maxAccountSwitches := h.maxAccountSwitches
+	maxFirstOutputTimeoutSwitches := h.gatewayService.OpenAIFirstOutputMaxSwitches()
 	switchCount := 0
 	firstOutputTimeoutSwitchCount := 0
 	attemptIndex := 0
@@ -604,7 +603,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
-					if openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount) {
+					if openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount, maxFirstOutputTimeoutSwitches) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -2634,11 +2633,18 @@ func openAIRequestAllowsFailoverReplay(c *gin.Context) bool {
 	return !failoverClientGone(c)
 }
 
-func openAIFirstOutputFailoverExhausted(failoverErr *service.UpstreamFailoverError, switchCount *int) bool {
+func openAIFirstOutputFailoverExhausted(failoverErr *service.UpstreamFailoverError, switchCount *int, maxSwitches int) bool {
 	if failoverErr == nil || !failoverErr.SafeToFailoverAfterWrite || switchCount == nil {
 		return false
 	}
-	if *switchCount >= maxOpenAIFirstOutputTimeoutSwitches {
+	body := strings.ToLower(string(failoverErr.ResponseBody))
+	if failoverErr.StatusCode != http.StatusGatewayTimeout || !strings.Contains(body, "first_output_timeout") {
+		return false
+	}
+	if maxSwitches < 0 {
+		maxSwitches = 0
+	}
+	if *switchCount >= maxSwitches {
 		return true
 	}
 	*switchCount = *switchCount + 1

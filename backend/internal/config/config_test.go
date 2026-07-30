@@ -372,17 +372,29 @@ func TestLoadDefaultOpenAIFirstOutputTimeoutsDisabled(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, cfg.Gateway.OpenAIFirstOutputTimeoutSeconds)
 	require.Zero(t, cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds)
+	require.True(t, cfg.Gateway.OpenAIFirstOutputFailoverEnabled)
+	require.Equal(t, 10, cfg.Gateway.OpenAIFirstOutputInitialAttemptTimeoutSeconds)
+	require.Equal(t, 1, cfg.Gateway.OpenAIFirstOutputMaxSwitches)
+	require.False(t, cfg.Gateway.OpenAIFirstOutputPenalizeAccount)
 }
 
 func TestLoadOpenAIFirstOutputTimeoutsFromEnv(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_OPENAI_FIRST_OUTPUT_TIMEOUT_SECONDS", "90")
 	t.Setenv("GATEWAY_OPENAI_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS", "240")
+	t.Setenv("GATEWAY_OPENAI_FIRST_OUTPUT_FAILOVER_ENABLED", "false")
+	t.Setenv("GATEWAY_OPENAI_FIRST_OUTPUT_INITIAL_ATTEMPT_TIMEOUT_SECONDS", "8")
+	t.Setenv("GATEWAY_OPENAI_FIRST_OUTPUT_MAX_SWITCHES", "2")
+	t.Setenv("GATEWAY_OPENAI_FIRST_OUTPUT_PENALIZE_ACCOUNT", "true")
 
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, 90, cfg.Gateway.OpenAIFirstOutputTimeoutSeconds)
 	require.Equal(t, 240, cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds)
+	require.False(t, cfg.Gateway.OpenAIFirstOutputFailoverEnabled)
+	require.Equal(t, 8, cfg.Gateway.OpenAIFirstOutputInitialAttemptTimeoutSeconds)
+	require.Equal(t, 2, cfg.Gateway.OpenAIFirstOutputMaxSwitches)
+	require.True(t, cfg.Gateway.OpenAIFirstOutputPenalizeAccount)
 }
 
 func TestValidateOpenAIFirstOutputTimeoutMinimum(t *testing.T) {
@@ -1765,6 +1777,16 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "gateway openai high effort first output timeout too large",
 			mutate:  func(c *Config) { c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds = 1801 },
 			wantErr: "gateway.openai_high_effort_first_output_timeout_seconds",
+		},
+		{
+			name:    "gateway openai first output initial attempt timeout too large",
+			mutate:  func(c *Config) { c.Gateway.OpenAIFirstOutputInitialAttemptTimeoutSeconds = 601 },
+			wantErr: "gateway.openai_first_output_initial_attempt_timeout_seconds",
+		},
+		{
+			name:    "gateway openai first output max switches too large",
+			mutate:  func(c *Config) { c.Gateway.OpenAIFirstOutputMaxSwitches = 6 },
+			wantErr: "gateway.openai_first_output_max_switches",
 		},
 		{
 			name:    "gateway max idle conns",

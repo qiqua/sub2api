@@ -215,6 +215,14 @@ gateway:
   openai_first_output_timeout_seconds: 0
   # Optional high/xhigh/max override (seconds, 0=use the standard timeout)
   openai_high_effort_first_output_timeout_seconds: 0
+  # Whether first-output timeout can switch to another account.
+  openai_first_output_failover_enabled: true
+  # First account first-SSE budget in seconds; 0 uses the total budget.
+  openai_first_output_initial_attempt_timeout_seconds: 10
+  # Max account switches caused by first-output timeout.
+  openai_first_output_max_switches: 1
+  # Whether first-output timeout triggers stream_timeout account penalty.
+  openai_first_output_penalize_account: false
   # Max request body size in bytes (default: 256MB)
   # 请求体最大字节数（默认 256MB）
   max_body_size: 268435456
