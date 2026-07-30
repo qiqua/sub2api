@@ -483,6 +483,13 @@ const baseSettingsResponse = {
   payment_visible_method_wxpay_enabled: true,
   openai_low_upstream_rate_priority_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
+  openai_first_output_timeout_seconds: 0,
+  openai_high_effort_first_output_timeout_seconds: 0,
+  openai_first_output_failover_enabled: true,
+  openai_first_output_initial_attempt_timeout_seconds: 10,
+  openai_first_output_max_switches: 1,
+  openai_first_output_penalize_account: false,
+  stream_data_interval_timeout: 180,
   openai_advanced_scheduler_enabled: false,
   scheduled_account_tests_enabled: false,
   openai_advanced_scheduler_sticky_weighted_enabled: false,
@@ -1056,6 +1063,37 @@ describe("admin SettingsView payment visible method controls", () => {
       "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑",
     );
     expect(wrapper.text()).not.toContain("OpenAI 高级调度器");
+  });
+
+  it("renders and saves openai first-output timeout controls from the gateway tab", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const card = wrapper.get('[data-testid="openai-first-output-settings"]');
+    expect(card.isVisible()).toBe(true);
+    await card.get('[data-testid="openai-first-output-timeout"]').setValue(25);
+    await card.get('[data-testid="openai-high-effort-first-output-timeout"]').setValue(40);
+    await card.get('[data-testid="openai-first-output-failover-enabled"]').setValue(false);
+    await card.get('[data-testid="openai-first-output-initial-attempt-timeout"]').setValue(8);
+    await card.get('[data-testid="openai-first-output-max-switches"]').setValue(2);
+    await card.get('[data-testid="openai-first-output-penalize-account"]').setValue(true);
+    await card.get('[data-testid="stream-data-interval-timeout"]').setValue(60);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_first_output_timeout_seconds: 25,
+        openai_high_effort_first_output_timeout_seconds: 40,
+        openai_first_output_failover_enabled: false,
+        openai_first_output_initial_attempt_timeout_seconds: 8,
+        openai_first_output_max_switches: 2,
+        openai_first_output_penalize_account: true,
+        stream_data_interval_timeout: 60,
+      }),
+    );
   });
 
   it("loads and saves upstream billing probe settings from the gateway tab", async () => {

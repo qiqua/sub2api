@@ -4547,6 +4547,139 @@
                 <Toggle v-model="form.allow_ungrouped_key_scheduling" />
               </div>
 
+              <div class="border-t border-gray-100 pt-5 dark:border-dark-700" data-testid="openai-first-output-settings">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.scheduling.openaiFirstOutput.title") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.scheduling.openaiFirstOutput.description") }}
+                  </p>
+                </div>
+
+                <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label class="block">
+                    <span class="text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.firstOutputTimeout") }}
+                    </span>
+                    <input
+                      v-model.number="form.openai_first_output_timeout_seconds"
+                      class="input mt-1"
+                      data-testid="openai-first-output-timeout"
+                      min="0"
+                      max="600"
+                      step="1"
+                      type="number"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.firstOutputTimeoutHint") }}
+                    </p>
+                  </label>
+
+                  <label class="block">
+                    <span class="text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.highEffortFirstOutputTimeout") }}
+                    </span>
+                    <input
+                      v-model.number="form.openai_high_effort_first_output_timeout_seconds"
+                      class="input mt-1"
+                      data-testid="openai-high-effort-first-output-timeout"
+                      min="0"
+                      max="1800"
+                      step="1"
+                      type="number"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.highEffortFirstOutputTimeoutHint") }}
+                    </p>
+                  </label>
+
+                  <label class="block">
+                    <span class="text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.initialAttemptTimeout") }}
+                    </span>
+                    <input
+                      v-model.number="form.openai_first_output_initial_attempt_timeout_seconds"
+                      class="input mt-1"
+                      data-testid="openai-first-output-initial-attempt-timeout"
+                      min="0"
+                      max="600"
+                      step="1"
+                      type="number"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.initialAttemptTimeoutHint") }}
+                    </p>
+                  </label>
+
+                  <label class="block">
+                    <span class="text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.maxSwitches") }}
+                    </span>
+                    <input
+                      v-model.number="form.openai_first_output_max_switches"
+                      class="input mt-1"
+                      data-testid="openai-first-output-max-switches"
+                      min="0"
+                      max="5"
+                      step="1"
+                      type="number"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.maxSwitchesHint") }}
+                    </p>
+                  </label>
+
+                  <div class="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-3 dark:border-dark-700 md:col-span-2">
+                    <div>
+                      <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {{ t("admin.settings.scheduling.openaiFirstOutput.failoverEnabled") }}
+                      </label>
+                      <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.scheduling.openaiFirstOutput.failoverEnabledHint") }}
+                      </p>
+                    </div>
+                    <Toggle
+                      v-model="form.openai_first_output_failover_enabled"
+                      data-testid="openai-first-output-failover-enabled"
+                    />
+                  </div>
+
+                  <div class="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-3 dark:border-dark-700 md:col-span-2">
+                    <div>
+                      <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {{ t("admin.settings.scheduling.openaiFirstOutput.penalizeAccount") }}
+                      </label>
+                      <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.scheduling.openaiFirstOutput.penalizeAccountHint") }}
+                      </p>
+                    </div>
+                    <Toggle
+                      v-model="form.openai_first_output_penalize_account"
+                      data-testid="openai-first-output-penalize-account"
+                    />
+                  </div>
+
+                  <label class="block md:col-span-2">
+                    <span class="text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.streamDataIntervalTimeout") }}
+                    </span>
+                    <input
+                      v-model.number="form.stream_data_interval_timeout"
+                      class="input mt-1 w-full md:w-56"
+                      data-testid="stream-data-interval-timeout"
+                      min="0"
+                      max="300"
+                      step="1"
+                      type="number"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.scheduling.openaiFirstOutput.streamDataIntervalTimeoutHint") }}
+                    </p>
+                  </label>
+                </div>
+              </div>
+
               <div
                 v-if="!form.openai_advanced_scheduler_enabled"
                 class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
@@ -8802,6 +8935,13 @@ type SettingsForm = Omit<
   force_email_on_third_party_signup: boolean;
   openai_low_upstream_rate_priority_enabled: boolean;
   openai_oauth_scheduling_rate_multiplier: number;
+  openai_first_output_timeout_seconds: number;
+  openai_high_effort_first_output_timeout_seconds: number;
+  openai_first_output_failover_enabled: boolean;
+  openai_first_output_initial_attempt_timeout_seconds: number;
+  openai_first_output_max_switches: number;
+  openai_first_output_penalize_account: boolean;
+  stream_data_interval_timeout: number;
   openai_advanced_scheduler_enabled: boolean;
   scheduled_account_tests_enabled: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled: boolean;
@@ -9018,6 +9158,13 @@ const form = reactive<SettingsForm>({
   max_claude_code_version: "",
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
+  openai_first_output_timeout_seconds: 0,
+  openai_high_effort_first_output_timeout_seconds: 0,
+  openai_first_output_failover_enabled: true,
+  openai_first_output_initial_attempt_timeout_seconds: 10,
+  openai_first_output_max_switches: 1,
+  openai_first_output_penalize_account: false,
+  stream_data_interval_timeout: 180,
   openai_low_upstream_rate_priority_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
   openai_advanced_scheduler_enabled: false,
@@ -10500,6 +10647,13 @@ async function saveSettings() {
       min_claude_code_version: form.min_claude_code_version,
       max_claude_code_version: form.max_claude_code_version,
       allow_ungrouped_key_scheduling: form.allow_ungrouped_key_scheduling,
+      openai_first_output_timeout_seconds: Math.max(0, Math.floor(Number(form.openai_first_output_timeout_seconds) || 0)),
+      openai_high_effort_first_output_timeout_seconds: Math.max(0, Math.floor(Number(form.openai_high_effort_first_output_timeout_seconds) || 0)),
+      openai_first_output_failover_enabled: form.openai_first_output_failover_enabled,
+      openai_first_output_initial_attempt_timeout_seconds: Math.max(0, Math.floor(Number(form.openai_first_output_initial_attempt_timeout_seconds) || 0)),
+      openai_first_output_max_switches: Math.max(0, Math.floor(Number(form.openai_first_output_max_switches) || 0)),
+      openai_first_output_penalize_account: form.openai_first_output_penalize_account,
+      stream_data_interval_timeout: Math.max(0, Math.floor(Number(form.stream_data_interval_timeout) || 0)),
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,

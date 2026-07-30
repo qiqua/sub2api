@@ -225,6 +225,13 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAllowUngroupedKeyScheduling:                        "false",
 		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
+		SettingKeyOpenAIFirstOutputTimeoutSeconds:                    strconv.Itoa(s.defaultOpenAIFirstOutputTimeoutSeconds()),
+		SettingKeyOpenAIHighEffortFirstOutputTimeoutSeconds:          strconv.Itoa(s.defaultOpenAIHighEffortFirstOutputTimeoutSeconds()),
+		SettingKeyOpenAIFirstOutputFailoverEnabled:                   strconv.FormatBool(s.defaultOpenAIFirstOutputFailoverEnabled()),
+		SettingKeyOpenAIFirstOutputInitialAttemptTimeoutSeconds:      strconv.Itoa(s.defaultOpenAIFirstOutputInitialAttemptTimeoutSeconds()),
+		SettingKeyOpenAIFirstOutputMaxSwitches:                       strconv.Itoa(s.defaultOpenAIFirstOutputMaxSwitches()),
+		SettingKeyOpenAIFirstOutputPenalizeAccount:                   strconv.FormatBool(s.defaultOpenAIFirstOutputPenalizeAccount()),
+		SettingKeyStreamDataIntervalTimeout:                          strconv.Itoa(s.defaultStreamDataIntervalTimeout()),
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyEnableClientDatelineNormalization:                  "true",
@@ -268,6 +275,82 @@ func parseForwardedClientIPHeadersSetting(value string) ([]string, error) {
 		return nil, fmt.Errorf("parse forwarded_client_ip_headers: %w", err)
 	}
 	return normalized, nil
+}
+
+func (s *SettingService) defaultOpenAIFirstOutputTimeoutSeconds() int {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.OpenAIFirstOutputTimeoutSeconds
+	}
+	return 0
+}
+
+func (s *SettingService) defaultOpenAIHighEffortFirstOutputTimeoutSeconds() int {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds
+	}
+	return 0
+}
+
+func (s *SettingService) defaultOpenAIFirstOutputFailoverEnabled() bool {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.OpenAIFirstOutputFailoverEnabled
+	}
+	return true
+}
+
+func (s *SettingService) defaultOpenAIFirstOutputInitialAttemptTimeoutSeconds() int {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.OpenAIFirstOutputInitialAttemptTimeoutSeconds
+	}
+	return defaultOpenAIFirstOutputInitialAttemptSeconds
+}
+
+func (s *SettingService) defaultOpenAIFirstOutputMaxSwitches() int {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.OpenAIFirstOutputMaxSwitches
+	}
+	return defaultOpenAIFirstOutputMaxSwitches
+}
+
+func (s *SettingService) defaultOpenAIFirstOutputPenalizeAccount() bool {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.OpenAIFirstOutputPenalizeAccount
+	}
+	return false
+}
+
+func (s *SettingService) defaultStreamDataIntervalTimeout() int {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.StreamDataIntervalTimeout
+	}
+	return 0
+}
+
+func intSettingWithDefault(settings map[string]string, key string, fallback int) int {
+	raw, ok := settings[key]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func boolSettingWithDefault(settings map[string]string, key string, fallback bool) bool {
+	raw, ok := settings[key]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes", "on", "enabled":
+		return true
+	case "false", "0", "no", "off", "disabled":
+		return false
+	default:
+		return fallback
+	}
 }
 
 // parseSettings 解析设置到结构体
@@ -854,6 +937,13 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
 	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
+	result.OpenAIFirstOutputTimeoutSeconds = intSettingWithDefault(settings, SettingKeyOpenAIFirstOutputTimeoutSeconds, s.defaultOpenAIFirstOutputTimeoutSeconds())
+	result.OpenAIHighEffortFirstOutputTimeoutSeconds = intSettingWithDefault(settings, SettingKeyOpenAIHighEffortFirstOutputTimeoutSeconds, s.defaultOpenAIHighEffortFirstOutputTimeoutSeconds())
+	result.OpenAIFirstOutputFailoverEnabled = boolSettingWithDefault(settings, SettingKeyOpenAIFirstOutputFailoverEnabled, s.defaultOpenAIFirstOutputFailoverEnabled())
+	result.OpenAIFirstOutputInitialAttemptTimeoutSeconds = intSettingWithDefault(settings, SettingKeyOpenAIFirstOutputInitialAttemptTimeoutSeconds, s.defaultOpenAIFirstOutputInitialAttemptTimeoutSeconds())
+	result.OpenAIFirstOutputMaxSwitches = intSettingWithDefault(settings, SettingKeyOpenAIFirstOutputMaxSwitches, s.defaultOpenAIFirstOutputMaxSwitches())
+	result.OpenAIFirstOutputPenalizeAccount = boolSettingWithDefault(settings, SettingKeyOpenAIFirstOutputPenalizeAccount, s.defaultOpenAIFirstOutputPenalizeAccount())
+	result.StreamDataIntervalTimeout = intSettingWithDefault(settings, SettingKeyStreamDataIntervalTimeout, s.defaultStreamDataIntervalTimeout())
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 	result.OpenAIAdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] == "true"
 	result.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled = settings[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] == "true"

@@ -126,6 +126,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if err := s.normalizeOpenAIAdvancedSchedulerOverrides(settings); err != nil {
 		return nil, err
 	}
+	if err := normalizeGatewayTimeoutRuntimeSettings(settings); err != nil {
+		return nil, err
+	}
 	settings.PaymentVisibleMethodAlipaySource = alipaySource
 	settings.PaymentVisibleMethodWxpaySource = wxpaySource
 	settings.WeChatConnectAppID = strings.TrimSpace(settings.WeChatConnectAppID)
@@ -453,6 +456,13 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
 	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
+	updates[SettingKeyOpenAIFirstOutputTimeoutSeconds] = strconv.Itoa(settings.OpenAIFirstOutputTimeoutSeconds)
+	updates[SettingKeyOpenAIHighEffortFirstOutputTimeoutSeconds] = strconv.Itoa(settings.OpenAIHighEffortFirstOutputTimeoutSeconds)
+	updates[SettingKeyOpenAIFirstOutputFailoverEnabled] = strconv.FormatBool(settings.OpenAIFirstOutputFailoverEnabled)
+	updates[SettingKeyOpenAIFirstOutputInitialAttemptTimeoutSeconds] = strconv.Itoa(settings.OpenAIFirstOutputInitialAttemptTimeoutSeconds)
+	updates[SettingKeyOpenAIFirstOutputMaxSwitches] = strconv.Itoa(settings.OpenAIFirstOutputMaxSwitches)
+	updates[SettingKeyOpenAIFirstOutputPenalizeAccount] = strconv.FormatBool(settings.OpenAIFirstOutputPenalizeAccount)
+	updates[SettingKeyStreamDataIntervalTimeout] = strconv.Itoa(settings.StreamDataIntervalTimeout)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerStickyWeightedEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled)
@@ -652,6 +662,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	}
 	if s.cfg != nil {
 		s.cfg.SetForwardedClientIPSettings(settings.APIKeyACLTrustForwardedIP, settings.ForwardedClientIPHeaders)
+		s.applyGatewayTimeoutRuntimeSettings(settings)
 	}
 	// codex_cli_only 加固策略缓存：设置更新后强制下次重载（涉及 4 个键 + JSON 解析，直接置过期）。
 	s.codexRestrictionPolicySF.Forget("codex_restriction_policy")

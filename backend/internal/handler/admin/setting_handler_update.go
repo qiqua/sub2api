@@ -253,6 +253,13 @@ type UpdateSettingsRequest struct {
 	// OpenAI account scheduling
 	OpenAILowUpstreamRatePriorityEnabled               *bool    `json:"openai_low_upstream_rate_priority_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                *float64 `json:"openai_oauth_scheduling_rate_multiplier"`
+	OpenAIFirstOutputTimeoutSeconds                    *int     `json:"openai_first_output_timeout_seconds"`
+	OpenAIHighEffortFirstOutputTimeoutSeconds          *int     `json:"openai_high_effort_first_output_timeout_seconds"`
+	OpenAIFirstOutputFailoverEnabled                   *bool    `json:"openai_first_output_failover_enabled"`
+	OpenAIFirstOutputInitialAttemptTimeoutSeconds      *int     `json:"openai_first_output_initial_attempt_timeout_seconds"`
+	OpenAIFirstOutputMaxSwitches                       *int     `json:"openai_first_output_max_switches"`
+	OpenAIFirstOutputPenalizeAccount                   *bool    `json:"openai_first_output_penalize_account"`
+	StreamDataIntervalTimeout                          *int     `json:"stream_data_interval_timeout"`
 	OpenAIAdvancedSchedulerEnabled                     *bool    `json:"openai_advanced_scheduler_enabled"`
 	ScheduledAccountTestsEnabled                       *bool    `json:"scheduled_account_tests_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled       *bool    `json:"openai_advanced_scheduler_sticky_weighted_enabled"`
@@ -1601,6 +1608,48 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIOAuthSchedulingRateMultiplier
 		}(),
+		OpenAIFirstOutputTimeoutSeconds: func() int {
+			if req.OpenAIFirstOutputTimeoutSeconds != nil {
+				return *req.OpenAIFirstOutputTimeoutSeconds
+			}
+			return previousSettings.OpenAIFirstOutputTimeoutSeconds
+		}(),
+		OpenAIHighEffortFirstOutputTimeoutSeconds: func() int {
+			if req.OpenAIHighEffortFirstOutputTimeoutSeconds != nil {
+				return *req.OpenAIHighEffortFirstOutputTimeoutSeconds
+			}
+			return previousSettings.OpenAIHighEffortFirstOutputTimeoutSeconds
+		}(),
+		OpenAIFirstOutputFailoverEnabled: func() bool {
+			if req.OpenAIFirstOutputFailoverEnabled != nil {
+				return *req.OpenAIFirstOutputFailoverEnabled
+			}
+			return previousSettings.OpenAIFirstOutputFailoverEnabled
+		}(),
+		OpenAIFirstOutputInitialAttemptTimeoutSeconds: func() int {
+			if req.OpenAIFirstOutputInitialAttemptTimeoutSeconds != nil {
+				return *req.OpenAIFirstOutputInitialAttemptTimeoutSeconds
+			}
+			return previousSettings.OpenAIFirstOutputInitialAttemptTimeoutSeconds
+		}(),
+		OpenAIFirstOutputMaxSwitches: func() int {
+			if req.OpenAIFirstOutputMaxSwitches != nil {
+				return *req.OpenAIFirstOutputMaxSwitches
+			}
+			return previousSettings.OpenAIFirstOutputMaxSwitches
+		}(),
+		OpenAIFirstOutputPenalizeAccount: func() bool {
+			if req.OpenAIFirstOutputPenalizeAccount != nil {
+				return *req.OpenAIFirstOutputPenalizeAccount
+			}
+			return previousSettings.OpenAIFirstOutputPenalizeAccount
+		}(),
+		StreamDataIntervalTimeout: func() int {
+			if req.StreamDataIntervalTimeout != nil {
+				return *req.StreamDataIntervalTimeout
+			}
+			return previousSettings.StreamDataIntervalTimeout
+		}(),
 		OpenAIAdvancedSchedulerEnabled: func() bool {
 			if req.OpenAIAdvancedSchedulerEnabled != nil {
 				return *req.OpenAIAdvancedSchedulerEnabled
@@ -2043,6 +2092,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentVisibleMethodWxpayEnabled:                       updatedSettings.PaymentVisibleMethodWxpayEnabled,
 		OpenAILowUpstreamRatePriorityEnabled:                   updatedSettings.OpenAILowUpstreamRatePriorityEnabled,
 		OpenAIOAuthSchedulingRateMultiplier:                    updatedSettings.OpenAIOAuthSchedulingRateMultiplier,
+		OpenAIFirstOutputTimeoutSeconds:                        updatedSettings.OpenAIFirstOutputTimeoutSeconds,
+		OpenAIHighEffortFirstOutputTimeoutSeconds:              updatedSettings.OpenAIHighEffortFirstOutputTimeoutSeconds,
+		OpenAIFirstOutputFailoverEnabled:                       updatedSettings.OpenAIFirstOutputFailoverEnabled,
+		OpenAIFirstOutputInitialAttemptTimeoutSeconds:          updatedSettings.OpenAIFirstOutputInitialAttemptTimeoutSeconds,
+		OpenAIFirstOutputMaxSwitches:                           updatedSettings.OpenAIFirstOutputMaxSwitches,
+		OpenAIFirstOutputPenalizeAccount:                       updatedSettings.OpenAIFirstOutputPenalizeAccount,
+		StreamDataIntervalTimeout:                              updatedSettings.StreamDataIntervalTimeout,
 		OpenAIAdvancedSchedulerEnabled:                         updatedSettings.OpenAIAdvancedSchedulerEnabled,
 		ScheduledAccountTestsEnabled:                           updatedSettings.ScheduledAccountTestsEnabled,
 		OpenAIAdvancedSchedulerStickyWeightedEnabled:           updatedSettings.OpenAIAdvancedSchedulerStickyWeightedEnabled,

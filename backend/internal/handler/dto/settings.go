@@ -219,6 +219,13 @@ type SystemSettings struct {
 	// OpenAI account scheduling
 	OpenAILowUpstreamRatePriorityEnabled                   bool    `json:"openai_low_upstream_rate_priority_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                    float64 `json:"openai_oauth_scheduling_rate_multiplier"`
+	OpenAIFirstOutputTimeoutSeconds                        int     `json:"openai_first_output_timeout_seconds"`
+	OpenAIHighEffortFirstOutputTimeoutSeconds              int     `json:"openai_high_effort_first_output_timeout_seconds"`
+	OpenAIFirstOutputFailoverEnabled                       bool    `json:"openai_first_output_failover_enabled"`
+	OpenAIFirstOutputInitialAttemptTimeoutSeconds          int     `json:"openai_first_output_initial_attempt_timeout_seconds"`
+	OpenAIFirstOutputMaxSwitches                           int     `json:"openai_first_output_max_switches"`
+	OpenAIFirstOutputPenalizeAccount                       bool    `json:"openai_first_output_penalize_account"`
+	StreamDataIntervalTimeout                              int     `json:"stream_data_interval_timeout"`
 	OpenAIAdvancedSchedulerEnabled                         bool    `json:"openai_advanced_scheduler_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool    `json:"openai_advanced_scheduler_sticky_weighted_enabled"`
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool    `json:"openai_advanced_scheduler_subscription_priority_enabled"`

@@ -458,6 +458,27 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAIOAuthSchedulingRateMultiplier != after.OpenAIOAuthSchedulingRateMultiplier {
 		changed = append(changed, "openai_oauth_scheduling_rate_multiplier")
 	}
+	if before.OpenAIFirstOutputTimeoutSeconds != after.OpenAIFirstOutputTimeoutSeconds {
+		changed = append(changed, "openai_first_output_timeout_seconds")
+	}
+	if before.OpenAIHighEffortFirstOutputTimeoutSeconds != after.OpenAIHighEffortFirstOutputTimeoutSeconds {
+		changed = append(changed, "openai_high_effort_first_output_timeout_seconds")
+	}
+	if before.OpenAIFirstOutputFailoverEnabled != after.OpenAIFirstOutputFailoverEnabled {
+		changed = append(changed, "openai_first_output_failover_enabled")
+	}
+	if before.OpenAIFirstOutputInitialAttemptTimeoutSeconds != after.OpenAIFirstOutputInitialAttemptTimeoutSeconds {
+		changed = append(changed, "openai_first_output_initial_attempt_timeout_seconds")
+	}
+	if before.OpenAIFirstOutputMaxSwitches != after.OpenAIFirstOutputMaxSwitches {
+		changed = append(changed, "openai_first_output_max_switches")
+	}
+	if before.OpenAIFirstOutputPenalizeAccount != after.OpenAIFirstOutputPenalizeAccount {
+		changed = append(changed, "openai_first_output_penalize_account")
+	}
+	if before.StreamDataIntervalTimeout != after.StreamDataIntervalTimeout {
+		changed = append(changed, "stream_data_interval_timeout")
+	}
 	if before.OpenAIAdvancedSchedulerEnabled != after.OpenAIAdvancedSchedulerEnabled {
 		changed = append(changed, "openai_advanced_scheduler_enabled")
 	}

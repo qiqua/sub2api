@@ -515,3 +515,29 @@ func TestDiffSettings_IncludesAuthSourceDefaultsAndForceEmail(t *testing.T) {
 	require.Contains(t, changed, "auth_source_default_email_grant_on_first_bind")
 	require.Contains(t, changed, "force_email_on_third_party_signup")
 }
+
+func TestDiffSettings_IncludesOpenAIFirstOutputRuntimeSettings(t *testing.T) {
+	changed := diffSettings(
+		&service.SystemSettings{},
+		&service.SystemSettings{
+			OpenAIFirstOutputTimeoutSeconds:               25,
+			OpenAIHighEffortFirstOutputTimeoutSeconds:     40,
+			OpenAIFirstOutputFailoverEnabled:              true,
+			OpenAIFirstOutputInitialAttemptTimeoutSeconds: 8,
+			OpenAIFirstOutputMaxSwitches:                  1,
+			OpenAIFirstOutputPenalizeAccount:              true,
+			StreamDataIntervalTimeout:                     60,
+		},
+		nil,
+		nil,
+		UpdateSettingsRequest{},
+	)
+
+	require.Contains(t, changed, "openai_first_output_timeout_seconds")
+	require.Contains(t, changed, "openai_high_effort_first_output_timeout_seconds")
+	require.Contains(t, changed, "openai_first_output_failover_enabled")
+	require.Contains(t, changed, "openai_first_output_initial_attempt_timeout_seconds")
+	require.Contains(t, changed, "openai_first_output_max_switches")
+	require.Contains(t, changed, "openai_first_output_penalize_account")
+	require.Contains(t, changed, "stream_data_interval_timeout")
+}

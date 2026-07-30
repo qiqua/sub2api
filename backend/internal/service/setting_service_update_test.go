@@ -70,7 +70,13 @@ func (s *settingGetAllRepoStub) Set(ctx context.Context, key, value string) erro
 }
 
 func (s *settingGetAllRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
-	panic("unexpected GetMultiple call")
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			out[key] = value
+		}
+	}
+	return out, nil
 }
 
 func (s *settingGetAllRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
@@ -439,6 +445,37 @@ func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler
 	require.Equal(t, "4", repo.updates[SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky])
 }
 
+func TestSettingService_UpdateSettings_OpenAIFirstOutputRuntimeSettings(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAIFirstOutputTimeoutSeconds:               25,
+		OpenAIHighEffortFirstOutputTimeoutSeconds:     40,
+		OpenAIFirstOutputFailoverEnabled:              false,
+		OpenAIFirstOutputInitialAttemptTimeoutSeconds: 8,
+		OpenAIFirstOutputMaxSwitches:                  2,
+		OpenAIFirstOutputPenalizeAccount:              true,
+		StreamDataIntervalTimeout:                     60,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "25", repo.updates[SettingKeyOpenAIFirstOutputTimeoutSeconds])
+	require.Equal(t, "40", repo.updates[SettingKeyOpenAIHighEffortFirstOutputTimeoutSeconds])
+	require.Equal(t, "false", repo.updates[SettingKeyOpenAIFirstOutputFailoverEnabled])
+	require.Equal(t, "8", repo.updates[SettingKeyOpenAIFirstOutputInitialAttemptTimeoutSeconds])
+	require.Equal(t, "2", repo.updates[SettingKeyOpenAIFirstOutputMaxSwitches])
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAIFirstOutputPenalizeAccount])
+	require.Equal(t, "60", repo.updates[SettingKeyStreamDataIntervalTimeout])
+	require.Equal(t, 25, cfg.Gateway.OpenAIFirstOutputTimeoutSeconds)
+	require.Equal(t, 40, cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds)
+	require.False(t, cfg.Gateway.OpenAIFirstOutputFailoverEnabled)
+	require.Equal(t, 8, cfg.Gateway.OpenAIFirstOutputInitialAttemptTimeoutSeconds)
+	require.Equal(t, 2, cfg.Gateway.OpenAIFirstOutputMaxSwitches)
+	require.True(t, cfg.Gateway.OpenAIFirstOutputPenalizeAccount)
+	require.Equal(t, 60, cfg.Gateway.StreamDataIntervalTimeout)
+}
+
 func TestSettingService_UpdateSettingsRejectsInvalidOpenAIOAuthSchedulingRateMultiplier(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})
@@ -507,6 +544,29 @@ func TestSettingService_ParseSettingsDefaultsOpenAIOAuthSchedulingRateMultiplier
 
 	require.Equal(t, 1.0, svc.parseSettings(map[string]string{}).OpenAIOAuthSchedulingRateMultiplier)
 	require.Equal(t, 0.05, svc.parseSettings(map[string]string{SettingKeyOpenAIOAuthSchedulingRateMultiplier: "0.05"}).OpenAIOAuthSchedulingRateMultiplier)
+}
+
+func TestSettingService_LoadGatewayTimeoutRuntimeSettings_OverlaysConfig(t *testing.T) {
+	repo := &settingGetAllRepoStub{values: map[string]string{
+		SettingKeyOpenAIFirstOutputTimeoutSeconds:               "25",
+		SettingKeyOpenAIHighEffortFirstOutputTimeoutSeconds:     "40",
+		SettingKeyOpenAIFirstOutputFailoverEnabled:              "false",
+		SettingKeyOpenAIFirstOutputInitialAttemptTimeoutSeconds: "8",
+		SettingKeyOpenAIFirstOutputMaxSwitches:                  "2",
+		SettingKeyOpenAIFirstOutputPenalizeAccount:              "true",
+		SettingKeyStreamDataIntervalTimeout:                     "60",
+	}}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	require.NoError(t, svc.LoadGatewayTimeoutRuntimeSettings(context.Background()))
+	require.Equal(t, 25, cfg.Gateway.OpenAIFirstOutputTimeoutSeconds)
+	require.Equal(t, 40, cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds)
+	require.False(t, cfg.Gateway.OpenAIFirstOutputFailoverEnabled)
+	require.Equal(t, 8, cfg.Gateway.OpenAIFirstOutputInitialAttemptTimeoutSeconds)
+	require.Equal(t, 2, cfg.Gateway.OpenAIFirstOutputMaxSwitches)
+	require.True(t, cfg.Gateway.OpenAIFirstOutputPenalizeAccount)
+	require.Equal(t, 60, cfg.Gateway.StreamDataIntervalTimeout)
 }
 
 func TestSettingService_GetAllSettings_OpenAIAdvancedSchedulerEffectiveValuesUseConfig(t *testing.T) {
