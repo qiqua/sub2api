@@ -14,7 +14,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -426,71 +425,6 @@ func (h *AccountHandler) CancelHealthCheckJob(c *gin.Context) {
 		return
 	}
 	response.Success(c, job)
-}
-
-func (h *AccountHandler) BatchDelete(c *gin.Context) {
-	var req struct {
-		AccountIDs []int64 `json:"account_ids"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request: "+err.Error())
-		return
-	}
-
-	accountIDs := dedupeAccountHealthCheckIDs(req.AccountIDs)
-	if len(accountIDs) == 0 {
-		response.BadRequest(c, "account_ids is required")
-		return
-	}
-
-	g, gctx := errgroup.WithContext(c.Request.Context())
-	g.SetLimit(10)
-
-	var mu sync.Mutex
-	successIDs := make([]int64, 0, len(accountIDs))
-	failedIDs := make([]int64, 0)
-	results := make([]service.BulkUpdateAccountResult, 0, len(accountIDs))
-
-	for _, id := range accountIDs {
-		accountID := id
-		g.Go(func() error {
-			err := h.adminService.DeleteAccount(gctx, accountID)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				failedIDs = append(failedIDs, accountID)
-				results = append(results, service.BulkUpdateAccountResult{
-					AccountID: accountID,
-					Success:   false,
-					Error:     err.Error(),
-				})
-			} else {
-				successIDs = append(successIDs, accountID)
-				results = append(results, service.BulkUpdateAccountResult{
-					AccountID: accountID,
-					Success:   true,
-				})
-			}
-			return nil
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].AccountID < results[j].AccountID
-	})
-	response.Success(c, gin.H{
-		"total":       len(accountIDs),
-		"success":     len(successIDs),
-		"failed":      len(failedIDs),
-		"success_ids": successIDs,
-		"failed_ids":  failedIDs,
-		"results":     results,
-	})
 }
 
 func (h *AccountHandler) runAccountHealthCheckJob(ctx context.Context, jobID string, accounts []service.Account, modelID string, concurrency int) {

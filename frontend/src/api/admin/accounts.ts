@@ -693,27 +693,6 @@ export async function stopInspection(): Promise<AccountInspectionRun | null> {
   return data
 }
 
-export async function batchDelete(accountIds: number[]): Promise<{
-  total: number
-  success: number
-  failed: number
-  success_ids?: number[]
-  failed_ids?: number[]
-  results: Array<{ account_id: number; success: boolean; error?: string }>
-}> {
-  const { data } = await apiClient.post<{
-    total: number
-    success: number
-    failed: number
-    success_ids?: number[]
-    failed_ids?: number[]
-    results: Array<{ account_id: number; success: boolean; error?: string }>
-  }>('/admin/accounts/batch-delete', {
-    account_ids: accountIds
-  })
-  return data
-}
-
 /**
  * Get account today statistics
  * @param id - Account ID
@@ -954,6 +933,8 @@ export interface BatchOperationResult {
   total: number
   success: number
   failed: number
+  success_ids?: number[]
+  failed_ids?: number[]
   errors?: Array<{ account_id: number; error: string }>
   warnings?: Array<{ account_id: number; warning: string }>
 }
@@ -965,6 +946,16 @@ export interface BatchOperationResult {
  */
 export async function revertProxyFallback(id: number): Promise<{ message: string }> {
   const { data } = await apiClient.post<{ message: string }>(`/admin/accounts/${id}/revert-proxy-fallback`)
+  return data
+}
+
+/**
+ * Delete multiple accounts with bounded server-side concurrency.
+ */
+export async function batchDelete(accountIds: number[]): Promise<BatchOperationResult> {
+  const { data } = await apiClient.post<BatchOperationResult>('/admin/accounts/batch-delete', {
+    account_ids: accountIds
+  })
   return data
 }
 
