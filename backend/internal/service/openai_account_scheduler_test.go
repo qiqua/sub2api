@@ -904,6 +904,98 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorReports
 	require.EqualError(t, err, "no available OpenAI accounts supporting model: grok-4.5 (pool=1, filtered: model_not_supported=1)")
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_LegacySingleAccountPoolIgnoresRuntimeBlock(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	for _, loadBatchEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("load_batch_%t", loadBatchEnabled), func(t *testing.T) {
+			ctx := context.Background()
+			groupID := int64(101207)
+			account := Account{
+				ID:          38151,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 10,
+			}
+			cfg := &config.Config{}
+			cfg.Gateway.Scheduling.LoadBatchEnabled = loadBatchEnabled
+			svc := &OpenAIGatewayService{
+				accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+				cache:              &schedulerTestGatewayCache{},
+				cfg:                cfg,
+				rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("false"),
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+			}
+			svc.BlockAccountScheduling(&account, time.Now().Add(time.Hour), "test_runtime_block")
+
+			selection, decision, err := svc.SelectAccountWithScheduler(
+				ctx, &groupID, "", "", "gpt-5.4-mini", nil, OpenAIUpstreamTransportAny, false,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.NotNil(t, selection.Account)
+			require.Equal(t, account.ID, selection.Account.ID)
+			require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_LegacyMultiAccountPoolFiltersRuntimeBlock(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	for _, loadBatchEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("load_batch_%t", loadBatchEnabled), func(t *testing.T) {
+			ctx := context.Background()
+			groupID := int64(101208)
+			blocked := Account{
+				ID:          38161,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Priority:    0,
+			}
+			healthy := Account{
+				ID:          38162,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Priority:    100,
+			}
+			cfg := &config.Config{}
+			cfg.Gateway.Scheduling.LoadBatchEnabled = loadBatchEnabled
+			svc := &OpenAIGatewayService{
+				accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{blocked, healthy}},
+				cache:              &schedulerTestGatewayCache{},
+				cfg:                cfg,
+				rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("false"),
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+			}
+			svc.BlockAccountScheduling(&blocked, time.Now().Add(time.Hour), "test_runtime_block")
+
+			selection, decision, err := svc.SelectAccountWithScheduler(
+				ctx, &groupID, "", "", "gpt-5.4-mini", nil, OpenAIUpstreamTransportAny, false,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.NotNil(t, selection.Account)
+			require.Equal(t, healthy.ID, selection.Account.ID)
+			require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SingleAccountPoolIgnoresRuntimeBlock(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 

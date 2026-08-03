@@ -635,6 +635,22 @@ func resolveOpenAIAccountUpstreamModelForRequest(account *Account, requestedMode
 	return upstreamModel
 }
 
+func openAIAllowRuntimeBlockedSingleAccount(accounts []Account) bool {
+	return len(accounts) == 1
+}
+
+func (s *OpenAIGatewayService) logOpenAISingleAccountRuntimeBlockIgnored(groupID *int64, account *Account, requestedModel string, layer string) {
+	if s == nil || account == nil || !s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
+		return
+	}
+	slog.Warn("openai.single_account_pool_runtime_block_ignored",
+		"account_id", account.ID,
+		"group_id", derefGroupID(groupID),
+		"model", requestedModel,
+		"layer", layer,
+	)
+}
+
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
@@ -659,7 +675,9 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
-	selected, compactBlocked := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, preferLowUpstreamRate)
+	allowRuntimeBlocked := openAIAllowRuntimeBlockedSingleAccount(accounts)
+
+	selected, compactBlocked := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, preferLowUpstreamRate, allowRuntimeBlocked)
 
 	if selected == nil {
 		return nil, noAvailableOpenAISelectionError(requestedModel, compactBlocked, "")
@@ -753,7 +771,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 // Returns nil if no available account. The second return reports whether at
 // least one candidate was filtered out solely because it lacks compact support
 // (only meaningful when requireCompact=true).
-func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *int64, platform string, accounts []Account, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, bool) {
+func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *int64, platform string, accounts []Account, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool, allowRuntimeBlocked bool) (*Account, bool) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	compactBlocked := false
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
@@ -769,11 +787,12 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 			continue
 		}
 
-		fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
+		fresh := s.resolveFreshSchedulableOpenAIAccountWithRuntimeBlockPolicy(ctx, acc, platform, requestedModel, false, requiredCapability, allowRuntimeBlocked)
 		if fresh == nil {
 			continue
 		}
-		fresh = s.recheckSelectedOpenAIAccountFromDB(ctx, fresh, groupID, platform, requestedModel, false, requiredCapability)
+		s.logOpenAISingleAccountRuntimeBlockIgnored(groupID, fresh, requestedModel, "legacy_select_best")
+		fresh = s.recheckSelectedOpenAIAccountFromDBWithRuntimeBlockPolicy(ctx, fresh, groupID, platform, requestedModel, false, requiredCapability, allowRuntimeBlocked)
 		if fresh == nil {
 			continue
 		}
@@ -908,6 +927,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if len(accounts) == 0 {
 		return nil, ErrNoAvailableAccounts
 	}
+	allowRuntimeBlocked := openAIAllowRuntimeBlockedSingleAccount(accounts)
 
 	isExcluded := func(accountID int64) bool {
 		if excludedIDs == nil {
@@ -928,12 +948,12 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
 				if !clearSticky && isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
-					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability)
+					account = s.recheckSelectedOpenAIAccountFromDBWithRuntimeBlockPolicy(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability, allowRuntimeBlocked)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else if !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-					} else if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
+					} else if !allowRuntimeBlocked && s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel, requireCompact) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -997,7 +1017,10 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			continue
 		}
 		if s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel) {
-			continue
+			if !allowRuntimeBlocked {
+				continue
+			}
+			s.logOpenAISingleAccountRuntimeBlockIgnored(groupID, acc, requestedModel, "legacy_load_filter")
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel, requireCompact) {
 			continue
@@ -1090,11 +1113,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 
 		for _, item := range selectionOrder {
-			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, item.account, platform, requestedModel, false, requiredCapability)
+			fresh := s.resolveFreshSchedulableOpenAIAccountWithRuntimeBlockPolicy(ctx, item.account, platform, requestedModel, false, requiredCapability, allowRuntimeBlocked)
 			if fresh == nil {
 				continue
 			}
-			fresh = s.recheckSelectedOpenAIAccountFromDB(ctx, fresh, groupID, platform, requestedModel, requireCompact, requiredCapability)
+			fresh = s.recheckSelectedOpenAIAccountFromDBWithRuntimeBlockPolicy(ctx, fresh, groupID, platform, requestedModel, requireCompact, requiredCapability, allowRuntimeBlocked)
 			if fresh == nil {
 				continue
 			}
@@ -1132,11 +1155,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			return compareOpenAILargeContextPoolPreference(ctx, s.cfg, ordered[i], ordered[j]) < 0
 		})
 		for _, acc := range ordered {
-			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
+			fresh := s.resolveFreshSchedulableOpenAIAccountWithRuntimeBlockPolicy(ctx, acc, platform, requestedModel, false, requiredCapability, allowRuntimeBlocked)
 			if fresh == nil {
 				continue
 			}
-			fresh = s.recheckSelectedOpenAIAccountFromDB(ctx, fresh, groupID, platform, requestedModel, requireCompact, requiredCapability)
+			fresh = s.recheckSelectedOpenAIAccountFromDBWithRuntimeBlockPolicy(ctx, fresh, groupID, platform, requestedModel, requireCompact, requiredCapability, allowRuntimeBlocked)
 			if fresh == nil {
 				continue
 			}
@@ -1185,11 +1208,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		return compareOpenAILargeContextPoolPreference(ctx, s.cfg, candidates[i], candidates[j]) < 0
 	})
 	for _, acc := range candidates {
-		fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
+		fresh := s.resolveFreshSchedulableOpenAIAccountWithRuntimeBlockPolicy(ctx, acc, platform, requestedModel, false, requiredCapability, allowRuntimeBlocked)
 		if fresh == nil {
 			continue
 		}
-		fresh = s.recheckSelectedOpenAIAccountFromDB(ctx, fresh, groupID, platform, requestedModel, requireCompact, requiredCapability)
+		fresh = s.recheckSelectedOpenAIAccountFromDBWithRuntimeBlockPolicy(ctx, fresh, groupID, platform, requestedModel, requireCompact, requiredCapability, allowRuntimeBlocked)
 		if fresh == nil {
 			continue
 		}
