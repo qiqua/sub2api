@@ -1233,6 +1233,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	return nil, ErrNoAvailableAccounts
 }
 
+func (s *OpenAIGatewayService) IsSingleOpenAICompatibleAccountPool(ctx context.Context, groupID *int64, platform string) bool {
+	accounts, err := s.listSchedulableAccounts(ctx, groupID, platform)
+	return err == nil && len(accounts) == 1
+}
+
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	if s.schedulerSnapshot != nil {

@@ -647,6 +647,27 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 							continue
 						}
 					}
+					if h.gatewayService.IsSingleOpenAICompatibleAccountPool(c.Request.Context(), apiKey.GroupID, requestPlatform) {
+						reqLog.Warn("openai.single_account_failover_exhausted",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.Int("attempt_index", attemptIndex),
+							zap.Int64("attempt_wait_ms", forwardDurationMs),
+							zap.Int64("cumulative_wait_ms", cumulativeWaitMs),
+							zap.String("reason", openAIUpstreamFailoverSwitchReason(failoverErr)),
+						)
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
+					if h.gatewayService.IsSingleOpenAICompatibleAccountPool(c.Request.Context(), apiKey.GroupID, requestPlatform) {
+						reqLog.Warn("openai_messages.single_account_failover_exhausted",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.String("reason", openAIUpstreamFailoverSwitchReason(failoverErr)),
+						)
+						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
