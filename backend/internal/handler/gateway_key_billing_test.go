@@ -188,6 +188,50 @@ func TestBuildKeyBillingInfoAppliesPeakMultiplier(t *testing.T) {
 	}
 }
 
+func TestBuildKeyBillingInfoIncludesSub2APIQuotaSnapshot(t *testing.T) {
+	groupID := int64(7)
+	windowStart := time.Date(2026, time.July, 12, 8, 0, 0, 0, time.UTC)
+	expiresAt := time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC)
+	apiKey := &service.APIKey{
+		UserID:        11,
+		GroupID:       &groupID,
+		Quota:         100,
+		QuotaUsed:     12.5,
+		ExpiresAt:     &expiresAt,
+		RateLimit5h:   20,
+		Usage5h:       3.25,
+		Window5hStart: &windowStart,
+		User:          &service.User{ID: 11, Balance: 88.8},
+		Group: &service.Group{
+			ID:               groupID,
+			RateMultiplier:   1,
+			SubscriptionType: service.SubscriptionTypeStandard,
+		},
+	}
+
+	got := buildKeyBillingInfo(apiKey, 1, windowStart.Add(time.Hour))
+
+	require.NotNil(t, got.Quota)
+	require.Equal(t, "USD", got.Quota.Currency)
+	require.Equal(t, service.SubscriptionTypeStandard, got.Quota.BillingMode)
+	require.True(t, got.Quota.APIKey.Limited)
+	require.NotNil(t, got.Quota.APIKey.Limit)
+	require.Equal(t, 100.0, *got.Quota.APIKey.Limit)
+	require.Equal(t, 12.5, got.Quota.APIKey.Used)
+	require.NotNil(t, got.Quota.APIKey.Remaining)
+	require.Equal(t, 87.5, *got.Quota.APIKey.Remaining)
+	require.False(t, got.Quota.APIKey.Exhausted)
+	require.False(t, got.Quota.APIKey.Expired)
+	require.NotNil(t, got.Quota.UserBalance)
+	require.Equal(t, 88.8, got.Quota.UserBalance.Balance)
+	require.Len(t, got.Quota.RateLimits, 1)
+	require.Equal(t, "5h", got.Quota.RateLimits[0].Window)
+	require.Equal(t, 20.0, got.Quota.RateLimits[0].Limit)
+	require.Equal(t, 3.25, got.Quota.RateLimits[0].Used)
+	require.Equal(t, 16.75, got.Quota.RateLimits[0].Remaining)
+	require.NotNil(t, got.Quota.RateLimits[0].ResetAt)
+}
+
 func TestKeyBillingInfoJSONKeepsZeroPeakMultiplierWhenEnabled(t *testing.T) {
 	groupID := int64(7)
 	apiKey := &service.APIKey{

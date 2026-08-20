@@ -1037,6 +1037,38 @@ export interface UpstreamBillingData {
   effective_rate_multiplier: number
   timezone?: string
   observed_at: string
+  quota?: UpstreamBillingQuotaSnapshot
+}
+
+export interface UpstreamBillingQuotaSnapshot {
+  currency: string
+  billing_mode?: string
+  api_key?: UpstreamBillingAPIKeyQuotaSnapshot
+  user_balance?: UpstreamBillingUserBalanceSnapshot
+  rate_limits?: UpstreamBillingRateLimitSnapshot[]
+}
+
+export interface UpstreamBillingAPIKeyQuotaSnapshot {
+  limited: boolean
+  limit?: number
+  used: number
+  remaining?: number
+  exhausted: boolean
+  expires_at?: string
+  expired: boolean
+}
+
+export interface UpstreamBillingUserBalanceSnapshot {
+  balance: number
+}
+
+export interface UpstreamBillingRateLimitSnapshot {
+  window: string
+  limit: number
+  used: number
+  remaining: number
+  window_start?: string
+  reset_at?: string
 }
 
 export type UpstreamBillingProbeStatus = 'ok' | 'unsupported' | 'failed'

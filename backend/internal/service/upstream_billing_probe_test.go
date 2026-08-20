@@ -565,6 +565,85 @@ func TestUpstreamBillingProbeRejectsMissingRequiredMultiplier(t *testing.T) {
 	require.ErrorContains(t, err, "incomplete billing response")
 }
 
+func TestUpstreamBillingProbeParsesSub2APIQuotaSnapshot(t *testing.T) {
+	data, err := parseUpstreamBillingProbeResponse([]byte(`{
+		"object":"sub2api.key_billing",
+		"schema_version":1,
+		"billing_scope":"token",
+		"group_rate_multiplier":0.8,
+		"resolved_rate_multiplier":0.8,
+		"peak_rate_enabled":false,
+		"effective_rate_multiplier":0.8,
+		"observed_at":"2026-07-13T01:00:00Z",
+		"quota":{
+			"currency":"USD",
+			"billing_mode":"standard",
+			"api_key":{
+				"limited":true,
+				"limit":100,
+				"used":12.5,
+				"remaining":87.5,
+				"exhausted":false,
+				"expires_at":"2026-07-20T00:00:00Z",
+				"expired":false
+			},
+			"user_balance":{"balance":88.8},
+			"rate_limits":[
+				{
+					"window":"5h",
+					"limit":20,
+					"used":3.25,
+					"remaining":16.75,
+					"window_start":"2026-07-12T08:00:00Z",
+					"reset_at":"2026-07-12T13:00:00Z"
+				}
+			]
+		}
+	}`))
+
+	require.NoError(t, err)
+	quota, ok := data["quota"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "USD", quota["currency"])
+	require.Equal(t, "standard", quota["billing_mode"])
+	apiKey, ok := quota["api_key"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, apiKey["limited"])
+	require.Equal(t, 100.0, apiKey["limit"])
+	require.Equal(t, 12.5, apiKey["used"])
+	require.Equal(t, 87.5, apiKey["remaining"])
+	require.Equal(t, "2026-07-20T00:00:00Z", apiKey["expires_at"])
+	userBalance, ok := quota["user_balance"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, 88.8, userBalance["balance"])
+	windows, ok := quota["rate_limits"].([]any)
+	require.True(t, ok)
+	require.Len(t, windows, 1)
+	window, ok := windows[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "5h", window["window"])
+	require.Equal(t, 16.75, window["remaining"])
+	require.NotContains(t, quota, "unexpected_secret")
+}
+
+func TestUpstreamBillingProbeRejectsInvalidQuotaSnapshot(t *testing.T) {
+	_, err := parseUpstreamBillingProbeResponse([]byte(`{
+		"object":"sub2api.key_billing",
+		"schema_version":1,
+		"billing_scope":"token",
+		"group_rate_multiplier":0.8,
+		"resolved_rate_multiplier":0.8,
+		"peak_rate_enabled":false,
+		"effective_rate_multiplier":0.8,
+		"observed_at":"2026-07-13T01:00:00Z",
+		"quota":{
+			"currency":"USD",
+			"api_key":{"limited":true,"limit":100,"used":12.5,"remaining":-1,"exhausted":false,"expired":false}
+		}
+	}`))
+	require.ErrorContains(t, err, "invalid upstream quota limit")
+}
+
 func TestUpstreamBillingProbeDiscardsResultWhenIdentityChangesInFlight(t *testing.T) {
 	account := &Account{
 		ID:          19,

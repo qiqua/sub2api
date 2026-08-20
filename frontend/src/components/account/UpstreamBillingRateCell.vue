@@ -30,6 +30,25 @@
           </p>
           <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: currentEffectiveRate ?? '-' }) }}</p>
           <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
+          <p
+            v-if="quotaPrimaryLine"
+            data-testid="upstream-billing-quota-primary"
+          >
+            {{ quotaPrimaryLine }}
+          </p>
+          <p
+            v-if="quotaBalanceLine"
+            data-testid="upstream-billing-quota-balance"
+          >
+            {{ quotaBalanceLine }}
+          </p>
+          <p
+            v-for="line in quotaRateLimitLines"
+            :key="line"
+            data-testid="upstream-billing-quota-window"
+          >
+            {{ line }}
+          </p>
         </template>
         <template v-else-if="stale && lastDetectedRate != null">
           <p data-testid="upstream-billing-last-rate">
@@ -67,6 +86,14 @@
     </HelpTooltip>
     <span v-if="hasEffectiveRate && statusLabel" :class="statusClass" class="whitespace-nowrap text-[10px] font-medium">
       {{ statusLabel }}
+    </span>
+    <span
+      v-if="hasEffectiveRate && quotaBadge"
+      class="whitespace-nowrap rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+      data-testid="upstream-billing-quota-badge"
+      :title="quotaPrimaryLine || quotaBalanceLine"
+    >
+      {{ quotaBadge }}
     </span>
     <button
       type="button"
@@ -173,6 +200,74 @@ const currentEffectiveRate = computed(() => {
   if (start == null || end == null || minute == null || start >= end || typeof peak !== 'number' || !Number.isFinite(peak) || peak < 0) return null
   const value = minute >= start && minute < end ? base * peak : base
   return Number.isFinite(value) ? value : null
+})
+const quota = computed(() => data.value?.quota)
+const quotaCurrency = computed(() => {
+  const value = quota.value?.currency
+  return typeof value === 'string' && value.trim() ? value.trim() : 'USD'
+})
+const formatQuotaMoney = (value: unknown, currency = quotaCurrency.value) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+  const symbol = currency === 'USD' ? '$' : currency === 'CNY' ? '¥' : `${currency} `
+  const abs = Math.abs(value)
+  const digits = abs >= 100 ? 0 : abs >= 10 ? 2 : 4
+  return `${symbol}${value.toFixed(digits)}`
+}
+const apiKeyQuota = computed(() => quota.value?.api_key)
+const quotaPrimaryLine = computed(() => {
+  const apiQuota = apiKeyQuota.value
+  if (!apiQuota) return ''
+  const used = formatQuotaMoney(apiQuota.used)
+  if (apiQuota.limited && typeof apiQuota.limit === 'number' && typeof apiQuota.remaining === 'number') {
+    return t('admin.accounts.upstreamBilling.apiKeyQuotaLimited', {
+      remaining: formatQuotaMoney(apiQuota.remaining),
+      used,
+      limit: formatQuotaMoney(apiQuota.limit)
+    })
+  }
+  return t('admin.accounts.upstreamBilling.apiKeyQuotaUnlimited', { used })
+})
+const quotaBalanceLine = computed(() => {
+  const balance = quota.value?.user_balance?.balance
+  if (typeof balance !== 'number' || !Number.isFinite(balance)) return ''
+  return t('admin.accounts.upstreamBilling.userBalance', { value: formatQuotaMoney(balance) })
+})
+const quotaRateLimitLines = computed(() => {
+  const windows = quota.value?.rate_limits
+  if (!Array.isArray(windows)) return []
+  return windows.flatMap((window) => {
+    if (
+      !window ||
+      typeof window.window !== 'string' ||
+      typeof window.limit !== 'number' ||
+      typeof window.used !== 'number' ||
+      typeof window.remaining !== 'number' ||
+      !Number.isFinite(window.limit) ||
+      !Number.isFinite(window.used) ||
+      !Number.isFinite(window.remaining)
+    ) {
+      return []
+    }
+    const reset = window.reset_at ? formatDate(window.reset_at) : '-'
+    return [t('admin.accounts.upstreamBilling.rateLimitWindow', {
+      window: window.window,
+      remaining: formatQuotaMoney(window.remaining),
+      used: formatQuotaMoney(window.used),
+      limit: formatQuotaMoney(window.limit),
+      reset
+    })]
+  })
+})
+const quotaBadge = computed(() => {
+  const apiQuota = apiKeyQuota.value
+  if (apiQuota?.limited && typeof apiQuota.remaining === 'number' && Number.isFinite(apiQuota.remaining)) {
+    return `Q ${formatQuotaMoney(apiQuota.remaining)}`
+  }
+  const balance = quota.value?.user_balance?.balance
+  if (typeof balance === 'number' && Number.isFinite(balance)) {
+    return `B ${formatQuotaMoney(balance)}`
+  }
+  return ''
 })
 const lastDetectedRate = computed(() => {
   const value = data.value?.effective_rate_multiplier

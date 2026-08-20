@@ -143,6 +143,38 @@ type upstreamBillingProbeResponse struct {
 	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
 	Timezone                *string  `json:"timezone"`
 	ObservedAt              string   `json:"observed_at"`
+	Quota                   *upstreamBillingQuotaResponse `json:"quota"`
+}
+
+type upstreamBillingQuotaResponse struct {
+	Currency    string                                   `json:"currency"`
+	BillingMode string                                   `json:"billing_mode"`
+	APIKey      *upstreamBillingAPIKeyQuotaResponse      `json:"api_key"`
+	UserBalance *upstreamBillingUserBalanceResponse      `json:"user_balance"`
+	RateLimits  []upstreamBillingRateLimitWindowResponse `json:"rate_limits"`
+}
+
+type upstreamBillingAPIKeyQuotaResponse struct {
+	Limited   bool       `json:"limited"`
+	Limit     *float64   `json:"limit"`
+	Used      float64    `json:"used"`
+	Remaining *float64   `json:"remaining"`
+	Exhausted bool       `json:"exhausted"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	Expired   bool       `json:"expired"`
+}
+
+type upstreamBillingUserBalanceResponse struct {
+	Balance float64 `json:"balance"`
+}
+
+type upstreamBillingRateLimitWindowResponse struct {
+	Window      string     `json:"window"`
+	Limit       float64    `json:"limit"`
+	Used        float64    `json:"used"`
+	Remaining   float64    `json:"remaining"`
+	WindowStart *time.Time `json:"window_start"`
+	ResetAt     *time.Time `json:"reset_at"`
 }
 
 // GetUpstreamBillingProbeSettings returns defaults when the setting is absent.
@@ -817,6 +849,11 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	if response.UserRateMultiplier != nil {
 		data["user_rate_multiplier"] = *response.UserRateMultiplier
 	}
+	if quotaData, err := sanitizeUpstreamBillingQuota(response.Quota); err != nil {
+		return nil, err
+	} else if len(quotaData) > 0 {
+		data["quota"] = quotaData
+	}
 	if *response.PeakRateEnabled {
 		if response.PeakStart == nil || response.PeakEnd == nil || response.Timezone == nil ||
 			response.PeakRateMultiplier == nil || response.AppliedPeakMultiplier == nil ||
@@ -847,6 +884,107 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 		return nil, fmt.Errorf("inconsistent effective billing multiplier")
 	}
 	return data, nil
+}
+
+func sanitizeUpstreamBillingQuota(quota *upstreamBillingQuotaResponse) (map[string]any, error) {
+	if quota == nil {
+		return nil, nil
+	}
+	out := map[string]any{
+		"currency": strings.TrimSpace(quota.Currency),
+	}
+	if out["currency"] == "" {
+		out["currency"] = "USD"
+	}
+	if strings.TrimSpace(quota.BillingMode) != "" {
+		out["billing_mode"] = strings.TrimSpace(quota.BillingMode)
+	}
+	if quota.APIKey != nil {
+		apiKey, err := sanitizeUpstreamBillingAPIKeyQuota(quota.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		out["api_key"] = apiKey
+	}
+	if quota.UserBalance != nil {
+		if !validFiniteNumber(quota.UserBalance.Balance) {
+			return nil, fmt.Errorf("invalid upstream quota user balance")
+		}
+		out["user_balance"] = map[string]any{"balance": quota.UserBalance.Balance}
+	}
+	if len(quota.RateLimits) > 0 {
+		windows := make([]any, 0, len(quota.RateLimits))
+		for _, window := range quota.RateLimits {
+			item, err := sanitizeUpstreamBillingRateLimitWindow(window)
+			if err != nil {
+				return nil, err
+			}
+			windows = append(windows, item)
+		}
+		out["rate_limits"] = windows
+	}
+	if len(out) == 1 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func sanitizeUpstreamBillingAPIKeyQuota(apiKey *upstreamBillingAPIKeyQuotaResponse) (map[string]any, error) {
+	if apiKey == nil {
+		return nil, nil
+	}
+	if !validNonNegativeFiniteNumber(apiKey.Used) {
+		return nil, fmt.Errorf("invalid upstream quota usage")
+	}
+	out := map[string]any{
+		"limited":   apiKey.Limited,
+		"used":      apiKey.Used,
+		"exhausted": apiKey.Exhausted,
+		"expired":   apiKey.Expired,
+	}
+	if apiKey.Limited {
+		if apiKey.Limit == nil || apiKey.Remaining == nil ||
+			!validNonNegativeFiniteNumber(*apiKey.Limit) ||
+			!validNonNegativeFiniteNumber(*apiKey.Remaining) {
+			return nil, fmt.Errorf("invalid upstream quota limit")
+		}
+		out["limit"] = *apiKey.Limit
+		out["remaining"] = *apiKey.Remaining
+	}
+	if apiKey.ExpiresAt != nil && !apiKey.ExpiresAt.IsZero() {
+		out["expires_at"] = apiKey.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	return out, nil
+}
+
+func sanitizeUpstreamBillingRateLimitWindow(window upstreamBillingRateLimitWindowResponse) (map[string]any, error) {
+	if strings.TrimSpace(window.Window) == "" ||
+		!validNonNegativeFiniteNumber(window.Limit) ||
+		!validNonNegativeFiniteNumber(window.Used) ||
+		!validNonNegativeFiniteNumber(window.Remaining) {
+		return nil, fmt.Errorf("invalid upstream quota window")
+	}
+	out := map[string]any{
+		"window":    strings.TrimSpace(window.Window),
+		"limit":     window.Limit,
+		"used":      window.Used,
+		"remaining": window.Remaining,
+	}
+	if window.WindowStart != nil && !window.WindowStart.IsZero() {
+		out["window_start"] = window.WindowStart.UTC().Format(time.RFC3339Nano)
+	}
+	if window.ResetAt != nil && !window.ResetAt.IsZero() {
+		out["reset_at"] = window.ResetAt.UTC().Format(time.RFC3339Nano)
+	}
+	return out, nil
+}
+
+func validFiniteNumber(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func validNonNegativeFiniteNumber(value float64) bool {
+	return value >= 0 && validFiniteNumber(value)
 }
 
 func upstreamBillingRateAt(data map[string]any, now time.Time) (float64, bool) {

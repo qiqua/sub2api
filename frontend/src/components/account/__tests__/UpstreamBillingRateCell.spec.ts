@@ -58,6 +58,32 @@ const billingData = {
   observed_at: '2026-07-13T00:00:00Z'
 }
 
+const billingDataWithQuota = {
+  ...billingData,
+  quota: {
+    currency: 'USD',
+    billing_mode: 'standard',
+    api_key: {
+      limited: true,
+      limit: 100,
+      used: 12.5,
+      remaining: 87.5,
+      exhausted: false,
+      expired: false
+    },
+    user_balance: { balance: 88.8 },
+    rate_limits: [
+      {
+        window: '5h',
+        limit: 20,
+        used: 3.25,
+        remaining: 16.75,
+        reset_at: '2026-07-13T05:00:00Z'
+      }
+    ]
+  }
+}
+
 describe('UpstreamBillingRateCell', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -98,6 +124,39 @@ describe('UpstreamBillingRateCell', () => {
     expect(wrapper.get('[data-testid="upstream-billing-probe"]').attributes('aria-label')).toBe(
       'admin.accounts.upstreamBilling.manualProbe'
     )
+  })
+
+  it('renders upstream Sub2API quota snapshot from billing probe data', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, {
+      attachTo: document.body,
+      props: {
+        account: makeAccount({
+          extra: {
+            upstream_billing_probe_enabled: true,
+            upstream_billing_probe: {
+              status: 'ok',
+              data: billingDataWithQuota,
+              received_at: '2026-07-13T00:00:00Z',
+              fresh_until: '2026-07-14T00:00:00Z',
+              last_attempt_at: '2026-07-13T00:00:00Z',
+              next_probe_at: '2026-07-13T00:30:00Z'
+            }
+          }
+        }),
+        now: Date.now()
+      }
+    })
+
+    expect(wrapper.get('[data-testid="upstream-billing-quota-badge"]').text()).toBe('Q $87.50')
+    await wrapper.get('[data-testid="upstream-billing-details"]').trigger('mouseenter')
+    await flushPromises()
+
+    const tooltips = document.body.querySelectorAll('[role="tooltip"]')
+    const tooltip = tooltips[tooltips.length - 1] as HTMLElement
+    expect(tooltip.textContent).toContain('admin.accounts.upstreamBilling.apiKeyQuotaLimited:$87.50,$12.50,$100')
+    expect(tooltip.textContent).toContain('admin.accounts.upstreamBilling.userBalance:$88.80')
+    expect(tooltip.textContent).toContain('admin.accounts.upstreamBilling.rateLimitWindow:5h,$16.75,$3.2500,$20.00,')
+    wrapper.unmount()
   })
 
   it('uses retained failed data only while it is still fresh', async () => {
