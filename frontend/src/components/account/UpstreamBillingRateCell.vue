@@ -30,6 +30,20 @@
           </p>
           <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: currentEffectiveRate ?? '-' }) }}</p>
           <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
+        </template>
+        <template v-else-if="stale && lastDetectedRate != null">
+          <p data-testid="upstream-billing-last-rate">
+            {{ t('admin.accounts.upstreamBilling.lastDetectedRate', { value: lastDetectedRate }) }}
+          </p>
+          <p data-testid="upstream-billing-last-time">
+            {{ t('admin.accounts.upstreamBilling.lastDetectedAt', { value: formatDate(snapshot?.received_at) }) }}
+          </p>
+          <p data-testid="upstream-billing-elapsed">
+            {{ t('admin.accounts.upstreamBilling.elapsedSince', { value: elapsedSinceLastSuccess }) }}
+          </p>
+        </template>
+        <p v-else>{{ statusLabel || '-' }}</p>
+        <template v-if="quota">
           <p
             v-if="quotaPrimaryLine"
             data-testid="upstream-billing-quota-primary"
@@ -50,18 +64,6 @@
             {{ line }}
           </p>
         </template>
-        <template v-else-if="stale && lastDetectedRate != null">
-          <p data-testid="upstream-billing-last-rate">
-            {{ t('admin.accounts.upstreamBilling.lastDetectedRate', { value: lastDetectedRate }) }}
-          </p>
-          <p data-testid="upstream-billing-last-time">
-            {{ t('admin.accounts.upstreamBilling.lastDetectedAt', { value: formatDate(snapshot?.received_at) }) }}
-          </p>
-          <p data-testid="upstream-billing-elapsed">
-            {{ t('admin.accounts.upstreamBilling.elapsedSince', { value: elapsedSinceLastSuccess }) }}
-          </p>
-        </template>
-        <p v-else>{{ statusLabel || '-' }}</p>
         <p
           v-if="probeEnabled && globalProbeEnabled !== false && nextProbeAt"
           data-testid="upstream-billing-next-probe"
@@ -88,7 +90,7 @@
       {{ statusLabel }}
     </span>
     <span
-      v-if="hasEffectiveRate && quotaBadge"
+      v-if="quotaBadge"
       class="whitespace-nowrap rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
       data-testid="upstream-billing-quota-badge"
       :title="quotaPrimaryLine || quotaBalanceLine"
@@ -263,9 +265,16 @@ const quotaBadge = computed(() => {
   if (apiQuota?.limited && typeof apiQuota.remaining === 'number' && Number.isFinite(apiQuota.remaining)) {
     return `Q ${formatQuotaMoney(apiQuota.remaining)}`
   }
+  if (apiQuota) {
+    const used = formatQuotaMoney(apiQuota.used)
+    return used !== '-' ? `Q ∞ ${used}` : 'Q ∞'
+  }
   const balance = quota.value?.user_balance?.balance
   if (typeof balance === 'number' && Number.isFinite(balance)) {
     return `B ${formatQuotaMoney(balance)}`
+  }
+  if (quotaRateLimitLines.value.length > 0) {
+    return `L ${quotaRateLimitLines.value.length}`
   }
   return ''
 })

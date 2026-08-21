@@ -159,6 +159,50 @@ describe('UpstreamBillingRateCell', () => {
     wrapper.unmount()
   })
 
+  it('renders quota badge even when the retained rate is stale or unlimited', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, {
+      attachTo: document.body,
+      props: {
+        account: makeAccount({
+          extra: {
+            upstream_billing_probe_enabled: true,
+            upstream_billing_probe: {
+              status: 'ok',
+              data: {
+                ...billingData,
+                quota: {
+                  currency: 'USD',
+                  billing_mode: 'subscription',
+                  api_key: {
+                    limited: false,
+                    used: 12.5,
+                    exhausted: false,
+                    expired: false
+                  }
+                }
+              },
+              received_at: '2026-07-12T22:00:00Z',
+              fresh_until: '2026-07-12T23:00:00Z',
+              last_attempt_at: '2026-07-12T22:00:00Z',
+              next_probe_at: '2026-07-13T01:00:00Z'
+            }
+          }
+        }),
+        now: Date.now()
+      }
+    })
+
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.stale')
+    expect(wrapper.get('[data-testid="upstream-billing-quota-badge"]').text()).toBe('Q ∞ $12.50')
+
+    await wrapper.get('[data-testid="upstream-billing-details"]').trigger('mouseenter')
+    await flushPromises()
+    const tooltips = document.body.querySelectorAll('[role="tooltip"]')
+    const tooltip = tooltips[tooltips.length - 1] as HTMLElement
+    expect(tooltip.textContent).toContain('admin.accounts.upstreamBilling.apiKeyQuotaUnlimited:$12.50')
+    wrapper.unmount()
+  })
+
   it('uses retained failed data only while it is still fresh', async () => {
     const account = makeAccount({
       extra: {
