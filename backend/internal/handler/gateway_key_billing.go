@@ -14,20 +14,20 @@ import (
 const keyBillingInfoSchemaVersion = 1
 
 type keyBillingInfoResponse struct {
-	Object                  string    `json:"object"`
-	SchemaVersion           int       `json:"schema_version"`
-	BillingScope            string    `json:"billing_scope"`
-	GroupRateMultiplier     float64   `json:"group_rate_multiplier"`
-	UserRateMultiplier      *float64  `json:"user_rate_multiplier,omitempty"`
-	ResolvedRateMultiplier  float64   `json:"resolved_rate_multiplier"`
-	PeakRateEnabled         bool      `json:"peak_rate_enabled"`
-	PeakStart               *string   `json:"peak_start,omitempty"`
-	PeakEnd                 *string   `json:"peak_end,omitempty"`
-	PeakRateMultiplier      *float64  `json:"peak_rate_multiplier,omitempty"`
-	AppliedPeakMultiplier   *float64  `json:"applied_peak_multiplier,omitempty"`
-	EffectiveRateMultiplier float64   `json:"effective_rate_multiplier"`
-	Timezone                *string   `json:"timezone,omitempty"`
-	ObservedAt              time.Time `json:"observed_at"`
+	Object                  string                   `json:"object"`
+	SchemaVersion           int                      `json:"schema_version"`
+	BillingScope            string                   `json:"billing_scope"`
+	GroupRateMultiplier     float64                  `json:"group_rate_multiplier"`
+	UserRateMultiplier      *float64                 `json:"user_rate_multiplier,omitempty"`
+	ResolvedRateMultiplier  float64                  `json:"resolved_rate_multiplier"`
+	PeakRateEnabled         bool                     `json:"peak_rate_enabled"`
+	PeakStart               *string                  `json:"peak_start,omitempty"`
+	PeakEnd                 *string                  `json:"peak_end,omitempty"`
+	PeakRateMultiplier      *float64                 `json:"peak_rate_multiplier,omitempty"`
+	AppliedPeakMultiplier   *float64                 `json:"applied_peak_multiplier,omitempty"`
+	EffectiveRateMultiplier float64                  `json:"effective_rate_multiplier"`
+	Timezone                *string                  `json:"timezone,omitempty"`
+	ObservedAt              time.Time                `json:"observed_at"`
 	Quota                   *keyBillingQuotaSnapshot `json:"quota,omitempty"`
 }
 

@@ -129,20 +129,20 @@ type UpstreamBillingProbeResult struct {
 }
 
 type upstreamBillingProbeResponse struct {
-	Object                  string   `json:"object"`
-	SchemaVersion           int      `json:"schema_version"`
-	BillingScope            string   `json:"billing_scope"`
-	GroupRateMultiplier     *float64 `json:"group_rate_multiplier"`
-	UserRateMultiplier      *float64 `json:"user_rate_multiplier"`
-	ResolvedRateMultiplier  *float64 `json:"resolved_rate_multiplier"`
-	PeakRateEnabled         *bool    `json:"peak_rate_enabled"`
-	PeakStart               *string  `json:"peak_start"`
-	PeakEnd                 *string  `json:"peak_end"`
-	PeakRateMultiplier      *float64 `json:"peak_rate_multiplier"`
-	AppliedPeakMultiplier   *float64 `json:"applied_peak_multiplier"`
-	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
-	Timezone                *string  `json:"timezone"`
-	ObservedAt              string   `json:"observed_at"`
+	Object                  string                        `json:"object"`
+	SchemaVersion           int                           `json:"schema_version"`
+	BillingScope            string                        `json:"billing_scope"`
+	GroupRateMultiplier     *float64                      `json:"group_rate_multiplier"`
+	UserRateMultiplier      *float64                      `json:"user_rate_multiplier"`
+	ResolvedRateMultiplier  *float64                      `json:"resolved_rate_multiplier"`
+	PeakRateEnabled         *bool                         `json:"peak_rate_enabled"`
+	PeakStart               *string                       `json:"peak_start"`
+	PeakEnd                 *string                       `json:"peak_end"`
+	PeakRateMultiplier      *float64                      `json:"peak_rate_multiplier"`
+	AppliedPeakMultiplier   *float64                      `json:"applied_peak_multiplier"`
+	EffectiveRateMultiplier *float64                      `json:"effective_rate_multiplier"`
+	Timezone                *string                       `json:"timezone"`
+	ObservedAt              string                        `json:"observed_at"`
 	Quota                   *upstreamBillingQuotaResponse `json:"quota"`
 }
 

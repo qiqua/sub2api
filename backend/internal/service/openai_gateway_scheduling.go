@@ -1533,10 +1533,6 @@ func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accoun
 	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
 }
 
-func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) *Account {
-	return s.resolveFreshSchedulableOpenAIAccountWithRuntimeBlockPolicy(ctx, account, platform, requestedModel, requireCompact, requiredCapability, false)
-}
-
 func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountWithRuntimeBlockPolicy(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability, allowRuntimeBlocked bool) *Account {
 	fresh := s.resolveFreshSchedulableOpenAIAccountBeforeProfitWithRuntimeBlockPolicy(ctx, account, platform, requestedModel, requireCompact, requiredCapability, allowRuntimeBlocked)
 	if fresh == nil {
@@ -1546,10 +1542,6 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountWithRuntimeBl
 		return nil
 	}
 	return fresh
-}
-
-func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountBeforeProfit(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) *Account {
-	return s.resolveFreshSchedulableOpenAIAccountBeforeProfitWithRuntimeBlockPolicy(ctx, account, platform, requestedModel, requireCompact, requiredCapability, false)
 }
 
 func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountBeforeProfitWithRuntimeBlockPolicy(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability, allowRuntimeBlocked bool) *Account {
@@ -1612,10 +1604,6 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBWithRuntimeBloc
 		return nil
 	}
 	return latest
-}
-
-func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBBeforeProfit(ctx context.Context, account *Account, groupID *int64, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) *Account {
-	return s.recheckSelectedOpenAIAccountFromDBBeforeProfitWithRuntimeBlockPolicy(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability, false)
 }
 
 func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBBeforeProfitWithRuntimeBlockPolicy(ctx context.Context, account *Account, groupID *int64, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability, allowRuntimeBlocked bool) *Account {
