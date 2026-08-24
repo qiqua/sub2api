@@ -1325,22 +1325,22 @@ describe("admin SettingsView payment visible method controls", () => {
     await flushPromises();
     await openGatewayTab(wrapper);
 
-    const summary = wrapper.get('[data-testid="openai-fast-policy-summary-0"]');
-    expect(summary.text()).toContain("??????");
-    expect(summary.text()).toContain("????");
-    expect(summary.text()).toContain("???????");
-    expect(summary.text()).toContain("???");
+	const summary = wrapper.get('[data-testid="openai-fast-policy-summary-0"]');
+	expect(summary.text()).toContain("目标模型");
+	expect(summary.text()).toContain("过滤");
+	expect(summary.text()).toContain("其他模型");
+	expect(summary.text()).toContain("透传");
 
     await wrapper
       .get(
-        '[role="group"][aria-labelledby="openai-fast-policy-models-label-0"] input[type="text"]',
-      )
-      .setValue("");
-    expect(summary.text()).toContain("??????");
-    expect(summary.text()).toContain("????");
-    expect(summary.text()).not.toContain("???????");
-    expect(summary.text()).not.toContain("???");
-  });
+		'[role="group"][aria-labelledby="openai-fast-policy-models-label-0"] input[type="text"]',
+	)
+	.setValue("");
+	expect(summary.text()).toContain("全部模型");
+	expect(summary.text()).toContain("过滤");
+	expect(summary.text()).not.toContain("其他模型");
+	expect(summary.text()).not.toContain("透传");
+});
 
   it("loads and saves upstream billing probe settings from the gateway tab", async () => {
     getUpstreamBillingProbeSettings.mockResolvedValueOnce({
