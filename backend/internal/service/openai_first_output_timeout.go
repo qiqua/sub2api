@@ -369,10 +369,16 @@ func (s *OpenAIGatewayService) openAIFirstOutputAttemptDeadline(c *gin.Context, 
 	return deadline, wait
 }
 
+// newOpenAIFirstOutputTimeoutError records the timeout as an upstream attempt
+// and returns the failover error. proxyID/proxyName are supplied by the caller
+// because the same deadline is enforced over HTTP and WebSocket transports,
+// whose direct-route semantics differ (see opsUpstreamWSProxyAttribution).
 func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,
+	proxyID *int64,
+	proxyName string,
 	startTime time.Time,
 	originalModel string,
 	reasoningEffort string,
@@ -406,7 +412,9 @@ func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 		zap.String("upstream_request_id", requestID),
 	).Warn("openai.first_output_timeout")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-		Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+		ProxyID:   proxyID,
+		ProxyName: proxyName,
+		Platform:  account.Platform, AccountID: account.ID, AccountName: account.Name,
 		UpstreamStatusCode: http.StatusGatewayTimeout, UpstreamRequestID: requestID,
 		Kind: "first_output_timeout", Message: "OpenAI upstream produced no SSE event before the deadline",
 		Detail: fmt.Sprintf("phase=%s attempt_index=%d attempt_wait_ms=%d cumulative_wait_ms=%d timeout_ms=%d", phase, attemptIndex, elapsed.Milliseconds(), totalElapsed.Milliseconds(), timeout.Milliseconds()),
