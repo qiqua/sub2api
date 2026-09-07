@@ -1,8 +1,8 @@
 <template>
   <AppLayout>
-    <div class="w-full min-w-0 space-y-6 pb-8">
+    <div class="flex h-full min-h-0 w-full min-w-0 flex-col gap-6">
       <header
-        class="page-header mb-0 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700 sm:p-6"
+        class="page-header mb-0 shrink-0 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700 sm:p-6"
       >
         <h1 class="page-title flex items-center gap-2 text-xl font-black text-gray-900 dark:text-white">
           <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400">
@@ -47,9 +47,14 @@
         </div>
       </header>
 
-      <MonitorSettingsPanel v-if="adminMonitorTab === 'v2'" />
+      <div
+        v-if="adminMonitorTab === 'v2'"
+        class="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-8 pr-1"
+      >
+        <MonitorSettingsPanel />
+      </div>
 
-      <TablePageLayout v-else>
+      <TablePageLayout v-else class="min-h-0 flex-1">
       <template #filters>
         <MonitorFiltersBar
           v-model:search="searchQuery"
