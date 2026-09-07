@@ -408,7 +408,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			}
 			headerGuard.close()
 			return nil, s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, startTime, reqModel, reasoningEffortValue,
+				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+				startTime, reqModel, reasoningEffortValue,
 				firstOutputAttemptWait, "response_headers", nil,
 			)
 		}
@@ -2423,7 +2424,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithReasoning(
 	}
 	if firstOutputTimeoutFired.Load() && !firstOutputSeen.Load() {
 		return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
-			ctx, c, account, startTime, originalModel, reasoningEffort,
+			ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+			startTime, originalModel, reasoningEffort,
 			firstOutputAttemptWait, "first_sse_event", resp.Header,
 		)
 	}
