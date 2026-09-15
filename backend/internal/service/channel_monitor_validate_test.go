@@ -27,9 +27,10 @@ func TestValidateEndpointRejectsUnsupportedScheme(t *testing.T) {
 	require.ErrorIs(t, err, ErrChannelMonitorEndpointScheme)
 }
 
-func TestValidateEndpointKeepsOriginAndSSRFGuards(t *testing.T) {
+func TestValidateEndpointKeepsBasePathAndSSRFGuards(t *testing.T) {
 	t.Parallel()
 
-	require.ErrorIs(t, validateEndpoint("http://1.1.1.1/v1"), ErrChannelMonitorEndpointPath)
+	require.NoError(t, validateEndpoint("http://1.1.1.1/v1"))
+	require.ErrorIs(t, validateEndpoint("http://1.1.1.1/v1?key=secret"), ErrChannelMonitorEndpointPath)
 	require.ErrorIs(t, validateEndpoint("http://127.0.0.1:8080"), ErrChannelMonitorEndpointPrivate)
 }
