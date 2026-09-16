@@ -1496,9 +1496,33 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	return nil, ErrNoAvailableAccounts
 }
 
-func (s *OpenAIGatewayService) IsSingleOpenAICompatibleAccountPool(ctx context.Context, groupID *int64, platform string) bool {
+// HasOpenAICompatibleFailoverCandidate reports whether a different, untried
+// account remains available for an in-flight failover. Forward may have already
+// marked the failed account as errored, rate-limited, or temporarily unavailable
+// before this check runs, so the remaining pool size alone cannot identify a
+// single-account pool.
+func (s *OpenAIGatewayService) HasOpenAICompatibleFailoverCandidate(
+	ctx context.Context,
+	groupID *int64,
+	platform string,
+	failedAccountID int64,
+	excludedIDs map[int64]struct{},
+) bool {
 	accounts, err := s.listSchedulableAccounts(ctx, groupID, platform)
-	return err == nil && len(accounts) == 1
+	if err != nil {
+		// Preserve fail-open selection behavior when the snapshot cannot be read.
+		return true
+	}
+	for _, account := range accounts {
+		if account.ID == failedAccountID {
+			continue
+		}
+		if _, excluded := excludedIDs[account.ID]; excluded {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
