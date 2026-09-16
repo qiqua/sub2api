@@ -1095,14 +1095,16 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LegacyMultiAccountPoolF
 		t.Run(fmt.Sprintf("load_batch_%t", loadBatchEnabled), func(t *testing.T) {
 			ctx := context.Background()
 			groupID := int64(101208)
+			blockedUntil := time.Now().Add(time.Hour)
 			blocked := Account{
-				ID:          38161,
-				Platform:    PlatformOpenAI,
-				Type:        AccountTypeOAuth,
-				Status:      StatusActive,
-				Schedulable: true,
-				Concurrency: 1,
-				Priority:    0,
+				ID:                     38161,
+				Platform:               PlatformOpenAI,
+				Type:                   AccountTypeOAuth,
+				Status:                 StatusActive,
+				Schedulable:            true,
+				Concurrency:            1,
+				Priority:               0,
+				TempUnschedulableUntil: &blockedUntil,
 			}
 			healthy := Account{
 				ID:          38162,
@@ -1122,7 +1124,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LegacyMultiAccountPoolF
 				rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("false"),
 				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
 			}
-			svc.BlockAccountScheduling(&blocked, time.Now().Add(time.Hour), "test_runtime_block")
+			svc.BlockAccountScheduling(&blocked, blockedUntil, "test_runtime_block")
+			require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(&blocked, "gpt-5.4-mini"))
 
 			selection, decision, err := svc.SelectAccountWithScheduler(
 				ctx, &groupID, "", "", "gpt-5.4-mini", nil, OpenAIUpstreamTransportAny, false,
@@ -1180,14 +1183,16 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_MultiAccountPoolFilters
 
 	ctx := context.Background()
 	groupID := int64(101206)
+	blockedUntil := time.Now().Add(time.Hour)
 	blocked := Account{
-		ID:          38141,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Status:      StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
-		Priority:    0,
+		ID:                     38141,
+		Platform:               PlatformOpenAI,
+		Type:                   AccountTypeOAuth,
+		Status:                 StatusActive,
+		Schedulable:            true,
+		Concurrency:            1,
+		Priority:               0,
+		TempUnschedulableUntil: &blockedUntil,
 	}
 	healthy := Account{
 		ID:          38142,
@@ -1205,7 +1210,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_MultiAccountPoolFilters
 		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
 		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
 	}
-	svc.BlockAccountScheduling(&blocked, time.Now().Add(time.Hour), "test_runtime_block")
+	svc.BlockAccountScheduling(&blocked, blockedUntil, "test_runtime_block")
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(&blocked, "gpt-5.4-mini"))
 
 	selection, decision, err := svc.SelectAccountWithScheduler(
 		ctx, &groupID, "", "", "gpt-5.4-mini", nil, OpenAIUpstreamTransportAny, false,
