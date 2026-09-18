@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -504,36 +505,52 @@ func TestOpenAIResponseFlush_BareErrorTimeoutSynthesizesFailed(t *testing.T) {
 	}{
 		{
 			name: "stream interval timeout",
-			cfg:  config.GatewayConfig{StreamDataIntervalTimeout: 1},
+			cfg:  config.GatewayConfig{StreamDataIntervalTimeout: 2},
 		},
 		{
-			name: "first output timeout",
-			cfg:  config.GatewayConfig{OpenAIFirstOutputTimeoutSeconds: 1},
+			name: "stream interval after first event disarms first output timeout",
+			cfg: config.GatewayConfig{
+				OpenAIFirstOutputFailoverEnabled: true,
+				OpenAIFirstOutputTimeoutSeconds:  1,
+				StreamDataIntervalTimeout:        2,
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader, writer := io.Pipe()
-			defer func() { _ = writer.Close() }()
-			recorder := newOpenAIResponseFlushRecorder()
-			resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, tt.cfg)
+			synctest.Test(t, func(t *testing.T) {
+				reader, writer := io.Pipe()
+				defer func() { _ = writer.Close() }()
+				recorder := newOpenAIResponseFlushRecorder()
+				resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, tt.cfg)
 
-			_, writeErr := io.WriteString(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}\n\n")
-			require.NoError(t, writeErr)
+				_, writeErr := io.WriteString(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}\n\n")
+				require.NoError(t, writeErr)
+				// A complete error event also proves the connection is active. Wait
+				// for the idle watchdog, allowing a later authoritative terminal.
+				time.Sleep(1200 * time.Millisecond)
+				select {
+				case err := <-errCh:
+					t.Fatalf("stream ended before idle timeout: %v", err)
+				default:
+				}
+				bodyBeforeTimeout, _ := recorder.snapshot()
+				require.Empty(t, bodyBeforeTimeout)
 
-			select {
-			case err := <-errCh:
-				require.Error(t, err)
-				require.Contains(t, err.Error(), "upstream response failed")
-			case <-time.After(3 * time.Second):
-				t.Fatal("timed out waiting for bare error terminal synthesis")
-			}
-			require.NotNil(t, <-resultCh)
-			body, flushes := recorder.snapshot()
-			require.NotContains(t, body, `"type":"error"`)
-			require.Equal(t, 1, strings.Count(body, `"type":"response.failed"`))
-			require.Len(t, flushes, 1)
+				select {
+				case err := <-errCh:
+					require.Error(t, err)
+					require.Contains(t, err.Error(), "upstream response failed")
+				case <-time.After(3 * time.Second):
+					t.Fatal("timed out waiting for bare error terminal synthesis")
+				}
+				require.NotNil(t, <-resultCh)
+				body, flushes := recorder.snapshot()
+				require.NotContains(t, body, `"type":"error"`)
+				require.Equal(t, 1, strings.Count(body, `"type":"response.failed"`))
+				require.Len(t, flushes, 1)
+			})
 		})
 	}
 }

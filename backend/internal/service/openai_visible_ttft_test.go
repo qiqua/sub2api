@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -71,37 +72,20 @@ func TestOpenAIResponsesTTFTStartsAtCompletedImage(t *testing.T) {
 	}
 }
 
-func TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		MaxLineSize:                     defaultMaxLineSize,
-		OpenAIFirstOutputTimeoutSeconds: 1,
-	}}}
-	reader, writer := io.Pipe()
-	writerDone := make(chan struct{})
-	go func() {
-		defer close(writerDone)
-		defer func() { _ = writer.Close() }()
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\"}}\n\n")
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"item_test\",\"type\":\"reasoning\",\"summary\":[]}}\n\n")
-		time.Sleep(1200 * time.Millisecond)
-	}()
-
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
-	account := &Account{ID: 1, Name: "account_test", Platform: PlatformOpenAI}
-
-	_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "test-model", "test-model")
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.True(t, failoverErr.SafeToFailoverAfterWrite)
-	require.Empty(t, recorder.Body.String())
-	select {
-	case <-writerDone:
-	case <-time.After(time.Second):
-		t.Fatal("synthetic upstream writer did not exit")
+func TestOpenAIMetadataDisarmsFirstEventTimeoutWithoutCountingVisibleTTFT(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		name := "native"
+		if passthrough {
+			name = "passthrough"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				result := runSyntheticVisibleTTFTStream(t, passthrough, 1200*time.Millisecond, 1, OpenAITTFTModeVisible,
+					`{"type":"response.output_text.delta","delta":"delayed output"}`)
+				require.NotNil(t, result.firstTokenMs)
+				require.GreaterOrEqual(t, *result.firstTokenMs, 1200)
+			})
+		})
 	}
 }
 
@@ -132,8 +116,9 @@ func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay 
 		gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{openAITTFTMode: OpenAITTFTModeSemantic, expiresAt: time.Now().Add(time.Minute).UnixNano()})
 	})
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		MaxLineSize:                     defaultMaxLineSize,
-		OpenAIFirstOutputTimeoutSeconds: timeoutSeconds,
+		OpenAIFirstOutputFailoverEnabled: true,
+		MaxLineSize:                      defaultMaxLineSize,
+		OpenAIFirstOutputTimeoutSeconds:  timeoutSeconds,
 	}}}
 	reader, writer := io.Pipe()
 	writerDone := make(chan struct{})

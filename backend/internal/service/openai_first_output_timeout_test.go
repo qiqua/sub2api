@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -118,41 +119,44 @@ func TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream(t *tes
 }
 
 func TestOpenAINativeFirstOutputTimeoutDisarmsAfterPreambleEventAndCleansReader(t *testing.T) {
-	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputFailoverEnabled:              true,
-		OpenAIFirstOutputInitialAttemptTimeoutSeconds: 10,
-		OpenAIFirstOutputMaxSwitches:                  1,
-		OpenAIFirstOutputTimeoutSeconds:               1,
-		MaxLineSize:                                   defaultMaxLineSize,
-	}}}
-	pr, pw := io.Pipe()
-	writerDone := make(chan struct{})
-	go func() {
-		defer close(writerDone)
-		defer func() { _ = pw.Close() }()
-		_, _ = pw.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_slow\"}}\n\n"))
-		_, _ = pw.Write([]byte("data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_slow\"}}\n\n"))
-		time.Sleep(200 * time.Millisecond)
-	}()
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	body := &firstOutputCloseTrackingBody{ReadCloser: pr, closed: make(chan struct{})}
-	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: body}
+	synctest.Test(t, func(t *testing.T) {
+		svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIFirstOutputFailoverEnabled:              true,
+			OpenAIFirstOutputInitialAttemptTimeoutSeconds: 10,
+			OpenAIFirstOutputMaxSwitches:                  1,
+			OpenAIFirstOutputTimeoutSeconds:               1,
+			MaxLineSize:                                   defaultMaxLineSize,
+		}}}
+		pr, pw := io.Pipe()
+		writerDone := make(chan struct{})
+		go func() {
+			defer close(writerDone)
+			defer func() { _ = pw.Close() }()
+			_, _ = pw.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_slow\"}}\n\n"))
+			_, _ = pw.Write([]byte("data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_slow\"}}\n\n"))
+			// Metadata arrives before the deadline, then the upstream closes after it.
+			time.Sleep(1200 * time.Millisecond)
+		}()
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		body := &firstOutputCloseTrackingBody{ReadCloser: pr, closed: make(chan struct{})}
+		resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: body}
 
-	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now().Add(-2*time.Second), "model", "model")
+		_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
 
-	require.Error(t, err)
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.NotContains(t, string(failoverErr.ResponseBody), "first_output_timeout")
-	require.Empty(t, rec.Body.String())
-	select {
-	case <-writerDone:
-	case <-time.After(time.Second):
-		t.Fatal("stream reader/writer goroutine did not exit after preamble stream ended")
-	}
+		require.Error(t, err)
+		var failoverErr *UpstreamFailoverError
+		require.ErrorAs(t, err, &failoverErr)
+		require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+		require.NotContains(t, string(failoverErr.ResponseBody), "first_output_timeout")
+		require.Empty(t, rec.Body.String())
+		select {
+		case <-writerDone:
+		case <-time.After(time.Second):
+			t.Fatal("stream reader/writer goroutine did not exit after preamble stream ended")
+		}
+	})
 }
 
 func TestNewOpenAIFirstOutputTimeoutErrorRecordsCallerProxyAttribution(t *testing.T) {
