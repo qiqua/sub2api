@@ -3,6 +3,7 @@
  */
 import axios from 'axios'
 import { buildGatewayUrl } from './url'
+import { isPreviewMode } from '@/dev/previewMode'
 
 // Create a separate client for setup endpoints (not under /api/v1)
 const setupClient = axios.create({
@@ -63,6 +64,9 @@ export interface InstallResponse {
  * Get setup status
  */
 export async function getSetupStatus(): Promise<SetupStatus> {
+  if (isPreviewMode) {
+    return { needs_setup: false, step: 'complete' }
+  }
   const response = await setupClient.get('/setup/status')
   return response.data.data
 }

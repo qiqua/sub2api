@@ -6,6 +6,7 @@ import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
 import { updateFavicon } from '@/utils/branding'
 import { isIOSDevice } from '@/utils/device'
+import { installPreviewSession } from '@/dev/previewMode'
 import './style.css'
 
 function initIOSViewportZoomFix() {
@@ -31,6 +32,9 @@ function initThemeClass() {
 }
 
 async function bootstrap() {
+  // Local-only demo session for visual QA when the backend is not running.
+  installPreviewSession()
+
   // Apply theme class globally before app mount to keep all routes consistent.
   initThemeClass()
   initIOSViewportZoomFix()

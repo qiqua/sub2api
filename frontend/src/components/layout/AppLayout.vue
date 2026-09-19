@@ -9,7 +9,7 @@
     <!-- Main Content Area -->
     <div
       class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden transition-all duration-300"
-      :class="[sidebarCollapsed ? 'lg:ml-[72px]' : 'lg:ml-64']"
+      :class="[sidebarCollapsed ? 'lg:ml-[72px]' : 'lg:ml-56']"
     >
       <!-- Header -->
       <AppHeader class="shrink-0" />

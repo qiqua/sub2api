@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="xiaoming-logo-title xiaoming-logo-description">
+  <title id="xiaoming-logo-title">小明 API</title>
+  <desc id="xiaoming-logo-description">由 XM 字母与路由节点组成的蓝青双色标志</desc>
+  <defs>
+    <linearGradient id="xiaoming-panel" x1="18" y1="14" x2="111" y2="117" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#173BBD" />
+      <stop offset="1" stop-color="#245CFF" />
+    </linearGradient>
+    <linearGradient id="xiaoming-route" x1="22" y1="31" x2="106" y2="97" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#82FFF0" />
+      <stop offset="1" stop-color="#24D6C6" />
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="30" fill="url(#xiaoming-panel)" />
+  <path d="M28 38L56 90M56 38L28 90" fill="none" stroke="url(#xiaoming-route)" stroke-width="10" stroke-linecap="round" />
+  <path d="M67 91V39L83 65L100 39V91" fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="28" cy="38" r="5" fill="#82FFF0" stroke="#173BBD" stroke-width="3" />
+  <circle cx="56" cy="38" r="5" fill="#82FFF0" stroke="#173BBD" stroke-width="3" />
+  <circle cx="28" cy="90" r="5" fill="#24D6C6" stroke="#173BBD" stroke-width="3" />
+  <circle cx="56" cy="90" r="5" fill="#24D6C6" stroke="#173BBD" stroke-width="3" />
+  <circle cx="83" cy="65" r="4" fill="#24D6C6" stroke="#FFFFFF" stroke-width="2" />
+</svg>

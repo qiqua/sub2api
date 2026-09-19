@@ -14,6 +14,8 @@ import {
 } from './adminUIRequest'
 import { refreshAuthTokens } from './tokenRefresh'
 import { getAPIBaseURL } from './url'
+import { isPreviewMode } from '@/dev/previewMode'
+import { previewAdapter } from '@/dev/previewAdapter'
 export { buildApiUrl, buildGatewayUrl } from './url'
 
 // ==================== Axios Instance Configuration ====================
@@ -26,6 +28,13 @@ export const apiClient: AxiosInstance = axios.create({
     'Content-Type': 'application/json'
   }
 })
+
+// The local UI preview deliberately stays inside Axios so every existing API
+// module (and its loading/error behavior) remains exercised without a backend.
+// `isPreviewMode` is dev-only, so production builds always use the real adapter.
+if (isPreviewMode) {
+  apiClient.defaults.adapter = previewAdapter
+}
 
 // ==================== Request Interceptor ====================
 

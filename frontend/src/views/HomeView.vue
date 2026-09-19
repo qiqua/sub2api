@@ -90,9 +90,23 @@
     </footer>
   </div>
 
+  <!-- Yuyu-style public landing page. The legacy default markup remains below
+       as a disabled fallback so custom deployments can re-enable it locally. -->
+  <YuyuLanding
+    v-else
+    :site-name="siteName"
+    :site-logo="siteLogo"
+    :site-subtitle="siteSubtitle"
+    :doc-url="docUrl"
+    :is-authenticated="isAuthenticated"
+    :dashboard-path="dashboardPath"
+    :show-model-plaza-entry="showModelPlazaEntry"
+    :api-base-url="appStore.apiBaseUrl"
+  />
+
   <!-- Default Home Page -->
   <div
-    v-else
+    v-if="false"
     class="relative flex min-h-screen flex-col overflow-hidden bg-gradient-to-br from-gray-50 via-primary-50/30 to-gray-100 dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
   >
     <!-- Background Decorations -->
@@ -499,6 +513,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
+import YuyuLanding from '@/components/home/YuyuLanding.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 

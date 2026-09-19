@@ -1,4 +1,16 @@
 import { buildGatewayUrl } from './client'
+import { isPreviewMode } from '@/dev/previewMode'
+import {
+  previewBatchImageContent,
+  previewBatchImageDownload,
+  previewCancelBatchImageJob,
+  previewDeleteBatchImageJob,
+  previewGetBatchImageJob,
+  previewListBatchImageItems,
+  previewListBatchImageJobs,
+  previewListBatchImageModels,
+  previewSubmitBatchImageJob,
+} from '@/dev/previewBatchImage'
 
 export type BatchImageStatus =
   | 'queued'
@@ -139,6 +151,7 @@ export async function submitBatchImageJob(
   payload: BatchImageSubmitRequest,
   idempotencyKey: string,
 ): Promise<BatchImageJob> {
+  if (isPreviewMode) return previewSubmitBatchImageJob(payload)
   const response = await fetch(buildGatewayUrl('/v1/images/batches'), {
     method: 'POST',
     headers: authHeaders(apiKey, {
@@ -152,6 +165,7 @@ export async function submitBatchImageJob(
 }
 
 export async function getBatchImageJob(apiKey: string, batchId: string): Promise<BatchImageJob> {
+  if (isPreviewMode) return previewGetBatchImageJob(batchId)
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}`), {
     headers: authHeaders(apiKey),
   })
@@ -160,6 +174,7 @@ export async function getBatchImageJob(apiKey: string, batchId: string): Promise
 }
 
 export async function listBatchImageJobs(apiKey: string, options: number | BatchImageJobsListOptions = 20): Promise<BatchImageJobsResponse> {
+  if (isPreviewMode) return previewListBatchImageJobs(options)
   const params = new URLSearchParams()
   if (typeof options === 'number') {
     params.set('limit', String(options))
@@ -180,6 +195,7 @@ export async function listBatchImageJobs(apiKey: string, options: number | Batch
 }
 
 export async function listBatchImageModels(apiKey: string): Promise<BatchImageModelsResponse> {
+  if (isPreviewMode) return previewListBatchImageModels()
   const response = await fetch(buildGatewayUrl('/v1/images/batches/models'), {
     headers: authHeaders(apiKey),
   })
@@ -192,6 +208,7 @@ export async function listBatchImageItems(
   batchId: string,
   status = '',
 ): Promise<BatchImageItemsResponse> {
+  if (isPreviewMode) return previewListBatchImageItems(batchId, status)
   const query = status ? `?status=${encodeURIComponent(status)}` : ''
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}/items${query}`), {
     headers: authHeaders(apiKey),
@@ -201,6 +218,7 @@ export async function listBatchImageItems(
 }
 
 export async function cancelBatchImageJob(apiKey: string, batchId: string): Promise<BatchImageJob> {
+  if (isPreviewMode) return previewCancelBatchImageJob(batchId)
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}/cancel`), {
     method: 'POST',
     headers: authHeaders(apiKey),
@@ -210,6 +228,7 @@ export async function cancelBatchImageJob(apiKey: string, batchId: string): Prom
 }
 
 export async function downloadBatchImageZip(apiKey: string, batchId: string): Promise<Blob> {
+  if (isPreviewMode) return previewBatchImageDownload()
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}/download`), {
     headers: authHeaders(apiKey),
   })
@@ -218,6 +237,7 @@ export async function downloadBatchImageZip(apiKey: string, batchId: string): Pr
 }
 
 export async function getBatchImageItemContent(apiKey: string, batchId: string, customId: string, imageIndex = 0): Promise<Blob> {
+  if (isPreviewMode) return previewBatchImageContent()
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(customId)}/content?image_index=${encodeURIComponent(String(imageIndex))}`), {
     headers: authHeaders(apiKey),
   })
@@ -226,6 +246,10 @@ export async function getBatchImageItemContent(apiKey: string, batchId: string, 
 }
 
 export async function deleteBatchImageJobRecord(apiKey: string, batchId: string): Promise<void> {
+  if (isPreviewMode) {
+    previewDeleteBatchImageJob(batchId)
+    return
+  }
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}`), {
     method: 'DELETE',
     headers: authHeaders(apiKey),

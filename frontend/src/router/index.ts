@@ -229,6 +229,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/image-workbench',
+    name: 'ImageWorkbench',
+    component: () => import('@/views/user/ImageWorkbenchView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Image Workbench',
+      titleKey: 'nav.imageWorkbench'
+    }
+  },
+  {
     path: '/usage',
     name: 'Usage',
     component: () => import('@/views/user/UsageView.vue'),
@@ -238,6 +249,18 @@ const routes: RouteRecordRaw[] = [
       title: 'Usage Records',
       titleKey: 'usage.title',
       descriptionKey: 'usage.description'
+    }
+  },
+  {
+    path: '/usage-stats',
+    name: 'UsageStats',
+    component: () => import('@/views/user/UsageStatsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Usage Statistics',
+      titleKey: 'usageStats.title',
+      descriptionKey: 'usageStats.description'
     }
   },
   {
@@ -277,6 +300,30 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/leaderboard',
+    name: 'Leaderboard',
+    component: () => import('@/views/user/LeaderboardView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Leaderboard',
+      titleKey: 'leaderboard.title',
+      descriptionKey: 'leaderboard.description'
+    }
+  },
+  {
+    path: '/route-settings',
+    name: 'RouteSettings',
+    component: () => import('@/views/user/RouteSettingsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Route Settings',
+      titleKey: 'routeSettings.title',
+      descriptionKey: 'routeSettings.description'
+    }
+  },
+  {
     path: '/profile',
     name: 'Profile',
     component: () => import('@/views/user/ProfileView.vue'),
@@ -311,6 +358,19 @@ const routes: RouteRecordRaw[] = [
       title: 'Purchase Subscription',
       titleKey: 'nav.buySubscription',
       descriptionKey: 'purchase.description',
+      requiresPayment: true
+    }
+  },
+  {
+    path: '/recharge-center',
+    name: 'RechargeCenter',
+    component: () => import('@/views/user/RechargeCenterView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Recharge Center',
+      titleKey: 'rechargeCenter.title',
+      descriptionKey: 'rechargeCenter.description',
       requiresPayment: true
     }
   },

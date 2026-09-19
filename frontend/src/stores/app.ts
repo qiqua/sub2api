@@ -13,6 +13,7 @@ import {
   type ReleaseInfo
 } from '@/api/admin/system'
 import { getPublicSettings as fetchPublicSettingsAPI } from '@/api/auth'
+import { isPreviewMode, previewSettings } from '@/dev/previewMode'
 
 export const useAppStore = defineStore('app', () => {
   // ==================== State ====================
@@ -308,6 +309,11 @@ export const useAppStore = defineStore('app', () => {
    * @param force - Force refresh from API
    */
   function fetchPublicSettings(force = false): Promise<PublicSettings | null> {
+    if (isPreviewMode) {
+      applySettings(previewSettings)
+      return Promise.resolve({ ...previewSettings })
+    }
+
     // An active request always wins over cache/force semantics so every caller observes
     // the same refresh result and no older request can overwrite a newer one.
     if (publicSettingsRequest) {

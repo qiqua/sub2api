@@ -13,6 +13,7 @@ import type {
   AuthResponse,
   ActionCaptchaRequestProof
 } from '@/types'
+import { isPreviewMode, previewUser } from '@/dev/previewMode'
 
 const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
@@ -433,6 +434,14 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if not authenticated or request fails
    */
   async function refreshUser(): Promise<User> {
+    if (isPreviewMode) {
+      // Keep the seeded demo identity stable while previewing the UI without a backend.
+      if (!user.value) {
+        user.value = previewUser
+      }
+      return user.value
+    }
+
     if (!token.value) {
       throw new Error('Not authenticated')
     }

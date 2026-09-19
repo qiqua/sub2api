@@ -1,5 +1,5 @@
 <template>
-  <header class="glass sticky top-0 z-30 border-b border-gray-200/50 dark:border-dark-700/50">
+  <header class="app-header-shell glass sticky top-0 z-30 border-b border-gray-200/50 dark:border-dark-700/50">
     <div class="flex h-16 items-center justify-between gap-2 px-2 sm:px-4 md:px-6">
       <!-- Left: Mobile Menu Toggle + Page Title -->
       <div class="flex shrink-0 items-center gap-2 sm:gap-4">
@@ -392,6 +392,19 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.app-header-shell {
+  min-height: 64px;
+  border-bottom-color: rgba(226, 232, 240, 0.82);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(22px) saturate(1.2);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+}
+
+.dark .app-header-shell {
+  border-bottom-color: rgba(51, 65, 85, 0.8);
+  background: rgba(3, 5, 10, 0.78);
+}
+
 .dropdown-enter-active,
 .dropdown-leave-active {
   transition: all 0.2s ease;

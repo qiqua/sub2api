@@ -785,3 +785,140 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* -------------------------------------------------------------------------
+ * Yuyu visual system
+ *
+ * Keep the existing utility class names (they are used throughout the app),
+ * but tune their surface treatment to the cobalt/graph-paper language used
+ * by the public landing page.  These selectors intentionally live after the
+ * Tailwind layers so they also theme legacy views without a markup rewrite.
+ * ---------------------------------------------------------------------- */
+:root {
+  --yuyu-brand: #163bf2;
+  --yuyu-brand-dark: #0929b8;
+  --yuyu-bg: #f4f6f8;
+  --yuyu-ink: #121212;
+  --yuyu-muted: #687282;
+  --yuyu-line: rgba(18, 18, 18, 0.12);
+  --yuyu-paper: #fff;
+}
+
+html,
+body {
+  background: var(--yuyu-bg);
+}
+
+body {
+  color: #111827;
+  font-family: 'Noto Sans SC', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+body.dark,
+.dark body {
+  background: #03050a;
+}
+
+.bg-mesh-gradient {
+  background-color: var(--yuyu-bg);
+  background-image: linear-gradient(rgba(37, 99, 235, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.035) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+
+.btn {
+  min-height: 2.5rem;
+  border-radius: 0.5rem;
+  box-shadow: none;
+}
+
+.btn-primary {
+  background: var(--yuyu-brand);
+  background-image: none;
+  box-shadow: none;
+}
+
+.btn-primary:hover {
+  background: var(--yuyu-brand-dark);
+  background-image: none;
+  box-shadow: 0 12px 24px -18px rgba(22, 59, 242, 0.9);
+}
+
+.btn-secondary,
+.btn-ghost {
+  border-radius: 0.5rem;
+}
+
+.input {
+  min-height: 2.75rem;
+  border-radius: 0.75rem;
+  background-color: rgba(255, 255, 255, 0.78);
+}
+
+.dark .input {
+  background-color: rgba(15, 23, 42, 0.78);
+  border-color: rgba(71, 85, 105, 0.8);
+}
+
+.card,
+.card-glass,
+.glass-card {
+  border-radius: 0.75rem;
+  border-color: rgba(226, 232, 240, 0.9);
+  background-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 10px 30px -24px rgba(15, 23, 42, 0.45);
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+}
+
+.sidebar {
+  width: 14rem;
+  background: #fff;
+  border-right-color: #e2e8f0;
+  box-shadow: none;
+}
+
+.sidebar.w-\[72px\] {
+  width: 72px;
+}
+
+.sidebar-link {
+  border-radius: 0.5rem;
+}
+
+.sidebar-link-active {
+  background: var(--yuyu-brand);
+  color: #fff;
+}
+
+.sidebar-link-active:hover {
+  background: var(--yuyu-brand-dark);
+  color: #fff;
+}
+
+.page-title {
+  letter-spacing: -0.02em;
+}
+
+.dark .sidebar {
+  background: #090d16;
+  border-right-color: #1e293b;
+}
+
+.dark .card,
+.dark .card-glass,
+.dark .glass-card {
+  background-color: rgba(15, 23, 42, 0.84);
+  border-color: rgba(51, 65, 85, 0.8);
+}
+
+@media (max-width: 1024px) {
+  .sidebar {
+    width: 14rem;
+  }
+}
