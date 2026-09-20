@@ -1,6 +1,83 @@
 <template>
   <AppLayout>
-    <div class="app-page-scroll space-y-6">
+    <div class="usage-replica-page app-page-scroll">
+      <UserRequestLogsTable
+        :data="usageLogs"
+        :loading="loading"
+        :total="pagination.total"
+        :page="pagination.page"
+        :page-size="pagination.page_size"
+        :active-filter-count="activeFilterCount"
+        :api-key-names="apiKeyNames"
+        :group-names="groupNames"
+        @sort="handleSort"
+        @refresh="refreshData"
+        @reset="resetFilters"
+        @update:page="handlePageChange"
+        @update:page-size="handlePageSizeChange"
+      >
+        <template #filters>
+          <div class="usage-replica-filters">
+            <label class="usage-replica-filter-field">
+              <span>{{ t('usage.apiKeyFilter') }}</span>
+              <Select v-model="filters.api_key_id" :options="apiKeyOptions" :placeholder="t('usage.allApiKeys')" @change="applyFilters" />
+            </label>
+            <label class="usage-replica-filter-field">
+              <span>{{ t('usage.model') }}</span>
+              <Select v-model="filters.model" :options="modelOptions" :placeholder="t('admin.usage.allModels')" searchable @change="applyFilters" />
+            </label>
+            <label class="usage-replica-filter-field">
+              <span>{{ t('usage.channel') }}</span>
+              <Select v-model="filters.group_id" :options="groupOptions" :placeholder="t('usage.allChannels')" searchable @change="applyFilters" />
+            </label>
+            <label class="usage-replica-filter-field">
+              <span>{{ t('usage.type') }}</span>
+              <Select v-model="filters.request_type" :options="requestTypeOptions" :placeholder="t('admin.usage.allTypes')" @change="applyFilters" />
+            </label>
+            <label class="usage-replica-filter-field">
+              <span>{{ t('usage.compactionFilter') }}</span>
+              <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="applyFilters" />
+            </label>
+            <label v-if="subscriptionFeatureEnabled" class="usage-replica-filter-field">
+              <span>{{ t('usage.specialBilling') }}</span>
+              <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="applyFilters" />
+            </label>
+            <label class="usage-replica-filter-field">
+              <span>{{ t('admin.usage.billingMode') }}</span>
+              <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="applyFilters" />
+            </label>
+            <label class="usage-replica-filter-field">
+              <span>{{ t('usage.startTime') }}</span>
+              <span class="usage-replica-date-control">
+                <input
+                  v-model="startDate"
+                  data-test="request-log-start-date"
+                  class="usage-replica-date-input"
+                  type="date"
+                  :max="endDate || undefined"
+                  @change="onFilterDateChange"
+                />
+              </span>
+            </label>
+            <label class="usage-replica-filter-field">
+              <span>{{ t('usage.endTime') }}</span>
+              <span class="usage-replica-date-control">
+                <input
+                  v-model="endDate"
+                  data-test="request-log-end-date"
+                  class="usage-replica-date-input"
+                  type="date"
+                  :min="startDate || undefined"
+                  @change="onFilterDateChange"
+                />
+              </span>
+            </label>
+          </div>
+        </template>
+      </UserRequestLogsTable>
+    </div>
+
+    <div class="app-page-scroll space-y-6 hidden">
       <UsageStatsCards :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
 
       <div class="space-y-4">
@@ -218,6 +295,17 @@
 
 </template>
 
+<style scoped>
+.usage-replica-page { min-height: 100%; color: #12213d; }
+.usage-replica-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 16px; padding-top: 16px; }
+.usage-replica-filter-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: #536985; font-size: 12px; font-weight: 600; }
+.usage-replica-filter-field :deep(.select-trigger) { width: 100%; min-width: 0; }
+.usage-replica-date-control { position: relative; display: flex; align-items: center; }
+.usage-replica-date-input { width: 100%; min-width: 0; height: 38px; border: 1px solid #d8e1ed; border-radius: 8px; padding: 0 11px; color: #263750; background: #fff; font: inherit; font-weight: 500; outline: none; }
+.usage-replica-date-input:focus { border-color: #8eb2ff; box-shadow: 0 0 0 3px rgba(38, 100, 234, .1); }
+@media (max-width: 700px) { .usage-replica-filters { grid-template-columns: minmax(0, 1fr); gap: 12px; } }
+</style>
+
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -236,6 +324,7 @@ import EndpointDistributionChart from '@/components/charts/EndpointDistributionC
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import Icon from '@/components/icons/Icon.vue'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
+import UserRequestLogsTable from '@/components/user/UserRequestLogsTable.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
@@ -415,8 +504,26 @@ const apiKeyOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('usage.allApiKeys') },
   ...apiKeys.value.map((key) => ({ value: key.id, label: key.name })),
 ])
+const apiKeyNames = computed<Record<number, string>>(() =>
+  Object.fromEntries(apiKeys.value.map((key) => [key.id, key.name]))
+)
+const groupNames = computed<Record<number, string>>(() =>
+  Object.fromEntries(groups.value.map((group) => [group.id, group.name]))
+)
+const activeFilterCount = computed(() => {
+  let count = 0
+  if (filters.value.api_key_id != null) count++
+  if (filters.value.model) count++
+  if (filters.value.group_id != null) count++
+  if (filters.value.request_type) count++
+  if (filters.value.native_compaction_v2 !== null && filters.value.native_compaction_v2 !== undefined) count++
+  if (filters.value.billing_type !== null && filters.value.billing_type !== undefined) count++
+  if (filters.value.billing_mode) count++
+  if (startDate.value || endDate.value) count++
+  return count
+})
 const groupOptions = computed<SelectOption[]>(() => [
-  { value: null, label: t('admin.usage.allGroups') },
+  { value: null, label: t('usage.allChannels') },
   ...groups.value.map((group) => ({ value: group.id, label: group.name })),
 ])
 const modelOptions = computed<SelectOption[]>(() => [
@@ -583,6 +690,13 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
   filters.value.start_date = range.startDate
   filters.value.end_date = range.endDate
   granularity.value = getGranularityForRange(range.startDate, range.endDate)
+  applyFilters()
+}
+
+const onFilterDateChange = () => {
+  filters.value.start_date = startDate.value
+  filters.value.end_date = endDate.value
+  granularity.value = getGranularityForRange(startDate.value, endDate.value)
   applyFilters()
 }
 

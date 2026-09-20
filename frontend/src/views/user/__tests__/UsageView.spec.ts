@@ -57,7 +57,12 @@ const messages: Record<string, string> = {
   'usage.tabs.errors': 'Error records',
   'usage.apiKeyFilter': 'API Key',
   'usage.model': 'Model',
+  'usage.channel': 'Channel',
+  'usage.allChannels': 'All channels',
   'usage.type': 'Type',
+  'usage.specialBilling': 'Special Billing',
+  'usage.startTime': 'Start Time',
+  'usage.endTime': 'End Time',
   'usage.ws': 'WS',
   'usage.stream': 'Stream',
   'usage.sync': 'Sync',
@@ -317,6 +322,61 @@ describe('user UsageView', () => {
     )!
     expect(keySelect.props('options')).toHaveLength(101)
     expect(keySelect.props('options')).toContainEqual({ value: 100, label: 'key-100' })
+    wrapper.unmount()
+  })
+
+  it('renders all request-log filters and counts the date range as one active filter', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+    await wrapper.find('.filter-trigger').trigger('click')
+
+    const filterFields = wrapper.findAll('.usage-replica-filter-field')
+    expect(filterFields).toHaveLength(9)
+    expect(filterFields[0].findComponent(Select).props('placeholder')).toBe('All API Keys')
+    expect(filterFields[1].findComponent(Select).props('placeholder')).toBe('All models')
+    expect(filterFields[2].findComponent(Select).props('placeholder')).toBe('All channels')
+    expect(filterFields[3].findComponent(Select).props('placeholder')).toBe('All types')
+    expect(wrapper.find('[data-test="request-log-start-date"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="request-log-end-date"]').exists()).toBe(true)
+    expect((wrapper.vm as any).activeFilterCount).toBe(1)
+
+    Object.assign((wrapper.vm as any).filters, {
+      api_key_id: 1,
+      model: 'gpt-5.4',
+      group_id: 1,
+      request_type: 'sync',
+      native_compaction_v2: true,
+      billing_type: 1,
+      billing_mode: 'token',
+    })
+    await wrapper.vm.$nextTick()
+
+    expect((wrapper.vm as any).activeFilterCount).toBe(8)
+    wrapper.unmount()
+  })
+
+  it('toggles the request-log time sort in both directions', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+    query.mockClear()
+
+    const sortButton = wrapper.find('.sort-button')
+    expect(sortButton.text()).toContain('↓')
+
+    await sortButton.trigger('click')
+    await flushPromises()
+    expect(query).toHaveBeenLastCalledWith(expect.objectContaining({
+      sort_by: 'created_at',
+      sort_order: 'asc',
+    }), expect.anything())
+    expect(sortButton.text()).toContain('↑')
+
+    await sortButton.trigger('click')
+    await flushPromises()
+    expect(query).toHaveBeenLastCalledWith(expect.objectContaining({
+      sort_by: 'created_at',
+      sort_order: 'desc',
+    }), expect.anything())
     wrapper.unmount()
   })
 

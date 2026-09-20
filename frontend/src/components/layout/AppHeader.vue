@@ -11,13 +11,18 @@
           <Icon name="menu" size="md" />
         </button>
 
-        <div class="hidden lg:block">
-          <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
-            {{ pageTitle }}
-          </h1>
-          <p v-if="pageDescription" class="text-xs text-gray-500 dark:text-dark-400">
-            {{ pageDescription }}
-          </p>
+        <div v-if="route.name !== 'Keys'" class="hidden items-center gap-3 lg:flex">
+          <div v-if="route.name === 'Usage'" class="grid h-10 w-10 place-items-center rounded-full border border-primary-100 bg-primary-50 text-primary-600 dark:border-primary-900/60 dark:bg-primary-900/20 dark:text-primary-300">
+            <Icon name="chartBar" size="md" />
+          </div>
+          <div>
+            <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ pageTitle }}
+            </h1>
+            <p v-if="pageDescription" class="text-xs text-gray-500 dark:text-dark-400">
+              {{ pageDescription }}
+            </p>
+          </div>
         </div>
       </div>
 
