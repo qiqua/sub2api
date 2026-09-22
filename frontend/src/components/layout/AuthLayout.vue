@@ -7,7 +7,7 @@
     <header class="auth-topbar absolute left-4 right-4 top-4 z-20 mx-auto flex max-w-5xl items-center justify-between px-3 py-2 sm:left-6 sm:right-6">
       <router-link to="/home" class="flex items-center gap-2.5 text-sm font-bold text-gray-900 dark:text-white">
         <span class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-black/5">
-          <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+          <img :src="siteLogo || '/xiaoming-logo.svg'" alt="Logo" class="h-full w-full object-contain" />
         </span>
         <span class="max-w-[12rem] truncate">{{ siteName }}</span>
       </router-link>
@@ -26,7 +26,7 @@
           <div
             class="auth-logo mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl"
           >
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+            <img :src="siteLogo || '/xiaoming-logo.svg'" alt="Logo" class="h-full w-full object-contain" />
           </div>
           <h1 class="auth-brand-title mb-2 text-3xl font-black">
             {{ siteName }}
