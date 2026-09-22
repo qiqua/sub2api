@@ -87,9 +87,9 @@
           <input
             class="page-size-slider"
             type="range"
-            min="10"
+            min="1"
             max="100"
-            step="10"
+            step="1"
             :value="pageSize"
             :aria-label="t('usage.requestLog.perPage')"
             @change="updatePageSizeFromSlider"
