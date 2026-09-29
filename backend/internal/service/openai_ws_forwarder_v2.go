@@ -62,23 +62,16 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		wsPath,
 	)
 
-	wirePreserve := account.IsOpenAIWirePreservingPassthroughEnabled()
 	payload := s.buildOpenAIWSCreatePayload(reqBody, account)
-	payloadStrategy := "full"
-	var removedKeys []string
-	if !wirePreserve {
-		payloadStrategy, removedKeys = applyOpenAIWSRetryPayloadStrategy(payload, attempt)
-	}
+	payloadStrategy, removedKeys := applyOpenAIWSRetryPayloadStrategy(payload, attempt)
 	turnState := ""
 	turnMetadata := ""
 	if c != nil && c.Request != nil {
 		turnState = strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 		turnMetadata = strings.TrimSpace(c.GetHeader(openAIWSTurnMetadataHeader))
 	}
-	if !wirePreserve {
-		setOpenAIWSTurnMetadata(payload, turnMetadata)
-		applyStagedCodexFingerprintClientMetadata(c, account, payload)
-	}
+	setOpenAIWSTurnMetadata(payload, turnMetadata)
+	applyStagedCodexFingerprintClientMetadata(c, account, payload)
 	previousResponseID := openAIWSPayloadString(payload, "previous_response_id")
 	previousResponseIDKind := ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
 	promptCacheKey := strings.TrimSpace(clientPromptCacheKey)

@@ -49,42 +49,6 @@ func TestAccount_IsOpenAIPassthroughEnabled(t *testing.T) {
 	})
 }
 
-func TestAccount_IsOpenAIWirePreservingPassthroughEnabled(t *testing.T) {
-	t.Run("requires passthrough and explicit opt in", func(t *testing.T) {
-		account := &Account{
-			Platform: PlatformOpenAI,
-			Type:     AccountTypeAPIKey,
-			Extra: map[string]any{
-				"openai_passthrough":               true,
-				"openai_passthrough_wire_preserve": true,
-			},
-		}
-		require.True(t, account.IsOpenAIWirePreservingPassthroughEnabled())
-	})
-
-	t.Run("disabled when passthrough is off", func(t *testing.T) {
-		account := &Account{
-			Platform: PlatformOpenAI,
-			Type:     AccountTypeAPIKey,
-			Extra: map[string]any{
-				"openai_passthrough_wire_preserve": true,
-			},
-		}
-		require.False(t, account.IsOpenAIWirePreservingPassthroughEnabled())
-	})
-
-	t.Run("disabled by default", func(t *testing.T) {
-		account := &Account{
-			Platform: PlatformOpenAI,
-			Type:     AccountTypeOAuth,
-			Extra: map[string]any{
-				"openai_passthrough": true,
-			},
-		}
-		require.False(t, account.IsOpenAIWirePreservingPassthroughEnabled())
-	})
-}
-
 func TestAccount_IsOpenAIOAuthPassthroughEnabled(t *testing.T) {
 	t.Run("仅OAuth类型允许返回开启", func(t *testing.T) {
 		oauthAccount := &Account{

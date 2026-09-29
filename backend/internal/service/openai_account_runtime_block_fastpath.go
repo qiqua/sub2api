@@ -166,17 +166,6 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		s.rateLimitService.HandleOpenAICodexSparkRateLimit(stateCtx, account, canonicalModel[0], statusCode, headers, responseBody) {
 		return false
 	}
-	// Wire-preserve is intended to behave like a direct compatible upstream:
-	// ordinary transient responses are observed and returned to the caller, not
-	// converted into a gateway-owned account/model cooldown. Explicit custom
-	// error policies still take precedence and continue through RateLimitService.
-	if shouldBypassOpenAIWirePreserveAutomaticHealth(account, statusCode, responseBody) {
-		slog.Debug("openai_wire_preserve_transient_state_skipped",
-			"account_id", account.ID,
-			"status_code", statusCode,
-		)
-		return false
-	}
 	if statusCode == http.StatusTooManyRequests {
 		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
 	}
@@ -193,7 +182,7 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// same-account retry budget. Recording the generic account+model transient
 	// cooldown here would block the next approved retry before that budget is used.
 	poolModeRetryable := account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
-	if !account.IsOpenAIPassthroughEnabled() && !shouldDisable && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
+	if !shouldDisable && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
 		shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) && !poolModeRetryable {
 		model := ""
 		if len(canonicalModel) > 0 {
@@ -211,17 +200,6 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		}
 	}
 	return shouldDisable
-}
-
-func shouldBypassOpenAIWirePreserveAutomaticHealth(account *Account, statusCode int, responseBody []byte) bool {
-	if !isOpenAIWirePreserveAccount(account) || account.IsCustomErrorCodesEnabled() {
-		return false
-	}
-	if statusCode == http.StatusTooManyRequests || statusCode == 529 {
-		return true
-	}
-	return shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) ||
-		isOpenAIRequestScopedCapacityShed("", responseBody)
 }
 
 func shouldCooldownOpenAITransientUpstreamError(statusCode int, responseBody []byte) bool {

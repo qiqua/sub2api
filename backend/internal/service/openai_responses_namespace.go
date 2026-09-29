@@ -45,9 +45,6 @@ func shouldFlattenOpenAIResponsesNamespaces(
 	if account == nil || !account.IsOpenAIOAuthLike() {
 		return false
 	}
-	if account.IsOpenAIWirePreservingPassthroughEnabled() {
-		return false
-	}
 	if !compactPath && !account.IsOpenAIResponsesFlattenNamespacesEnabled() {
 		return false
 	}
@@ -62,9 +59,6 @@ func shouldFlattenOpenAIResponsesNamespaces(
 // namespaces because that protocol supports them and does not restore payloads.
 func shouldStripOpenAIResponsesInputNamespaces(account *Account, transport OpenAIUpstreamTransport, passthroughEnabled bool) bool {
 	if account == nil || (!account.IsOpenAIOAuthLike() && !account.IsOpenAIApiKey()) {
-		return false
-	}
-	if account.IsOpenAIWirePreservingPassthroughEnabled() {
 		return false
 	}
 	if transport == OpenAIUpstreamTransportResponsesWebsocketV2 && !passthroughEnabled {

@@ -550,15 +550,6 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 			return 0, nil, "", nil
 		}
 	}
-	runtimeBlockPoolChecked := false
-	runtimeBlockSingleAccountAllowed := false
-	allowRuntimeBlockedSingleAccount := func() bool {
-		if !runtimeBlockPoolChecked {
-			runtimeBlockSingleAccountAllowed = s.allowRuntimeBlockedSingleAccountForPreviousResponse(ctx, groupID, accountID)
-			runtimeBlockPoolChecked = true
-		}
-		return runtimeBlockSingleAccountAllowed
-	}
 
 	account, err := s.getSchedulableAccount(ctx, accountID)
 	if err != nil || account == nil {
@@ -572,21 +563,9 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if !account.IsOpenAIApiKey() && s.getOpenAIWSProtocolResolver().Resolve(account).Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
 		return 0, nil, "", nil
 	}
-	stickyUnavailable := shouldClearStickySession(account, requestedModel)
-	if isOpenAIWirePreserveAccount(account) {
-		stickyUnavailable = !isOpenAIWirePreserveAccountSchedulableForModel(ctx, account, requestedModel)
-	}
-	if stickyUnavailable || !account.IsOpenAI() ||
-		(!isOpenAIWirePreserveAccount(account) && !account.IsSchedulable()) {
+	if shouldClearStickySession(account, requestedModel) || !account.IsOpenAI() || !account.IsSchedulable() {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil
-	}
-	if s.isOpenAIAccountRuntimeBlockedForScheduling(account, requestedModel) {
-		if !allowOpenAIAccountRuntimeBlockForRequest(account, allowRuntimeBlockedSingleAccount()) {
-			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
-		}
-		s.logOpenAISingleAccountRuntimeBlockIgnored(groupID, account, requestedModel, "previous_response_id")
 	}
 	if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
@@ -617,12 +596,7 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 			return 0, nil, "", nil
 		}
-		latestStickyUnavailable := shouldClearStickySession(latest, requestedModel)
-		if isOpenAIWirePreserveAccount(latest) {
-			latestStickyUnavailable = !isOpenAIWirePreserveAccountSchedulableForModel(ctx, latest, requestedModel)
-		}
-		if latestStickyUnavailable || !latest.IsOpenAI() ||
-			(!isOpenAIWirePreserveAccount(latest) && !latest.IsSchedulable()) {
+		if shouldClearStickySession(latest, requestedModel) || !latest.IsOpenAI() || !latest.IsSchedulable() {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 			return 0, nil, "", nil
 		}
@@ -649,12 +623,9 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		if vetoed, _ := openAIProfitControlVetoReason(ctx, latest); vetoed {
 			return 0, nil, "", nil
 		}
-		if s.isOpenAIAccountRuntimeBlockedForScheduling(latest, requestedModel) {
-			if !allowOpenAIAccountRuntimeBlockForRequest(latest, allowRuntimeBlockedSingleAccount()) {
-				_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-				return 0, nil, "", nil
-			}
-			s.logOpenAISingleAccountRuntimeBlockIgnored(groupID, latest, requestedModel, "previous_response_id_db_recheck")
+		if s.isOpenAIAccountRequestRuntimeBlocked(latest, requestedModel) {
+			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+			return 0, nil, "", nil
 		}
 		account = latest
 	}

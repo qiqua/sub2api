@@ -134,11 +134,10 @@ type OpenAIAccountScheduler interface {
 // auto-health learner. Existing callers can keep using ReportResult; newer
 // paths may pass status/error kind without changing request contents.
 type OpenAIAccountScheduleReport struct {
-	Success                    bool
-	FirstTokenMs               *int
-	StatusCode                 int
-	FailureKind                string
-	SkipAutomaticHealthActions bool
+	Success      bool
+	FirstTokenMs *int
+	StatusCode   int
+	FailureKind  string
 }
 
 type openAIAccountSchedulerMetrics struct {
@@ -714,12 +713,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
-	stickyUnavailable := shouldClearStickySession(account, req.RequestedModel)
-	if isOpenAIWirePreserveAccount(account) {
-		stickyUnavailable = !isOpenAIWirePreserveAccountSchedulableForModel(ctx, account, req.RequestedModel)
-	}
-	if stickyUnavailable || account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() ||
-		(!isOpenAIWirePreserveAccount(account) && !account.IsSchedulable()) {
+	if shouldClearStickySession(account, req.RequestedModel) || account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || !account.IsSchedulable() {
 		clearBinding()
 		return nil, false, nil
 	}
@@ -1649,7 +1643,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				continue
 			}
 		}
-		if !isOpenAIAccountSchedulableForSelection(ctx, account, req.RequestedModel) {
+		if !account.IsSchedulable() {
 			filterStats.exclude("not_schedulable")
 			continue
 		}
@@ -1657,8 +1651,8 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
-		if s.service.isOpenAIAccountRuntimeBlockedForScheduling(account, req.RequestedModel) {
-			if !allowOpenAIAccountRuntimeBlockForRequest(account, req.AllowRuntimeBlockedSingleAccount) {
+		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
+			if !req.AllowRuntimeBlockedSingleAccount {
 				filterStats.exclude("runtime_blocked")
 				continue
 			}
@@ -1986,11 +1980,10 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if req.RequirePrivacySet && !account.IsPrivacySet() {
 		return false, "privacy_not_set"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRuntimeBlockedForScheduling(account, req.RequestedModel) &&
-		!allowOpenAIAccountRuntimeBlockForRequest(account, req.AllowRuntimeBlockedSingleAccount) {
+	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) && !req.AllowRuntimeBlockedSingleAccount {
 		return false, "runtime_blocked"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIProxyStreamQuarantinedForScheduling(ctx, account) {
+	if s != nil && s.service != nil && s.service.isOpenAIProxyStreamQuarantined(ctx, account) {
 		return false, "proxy_stream_quarantined"
 	}
 	// Quota auto-pause must be evaluated during the initial filter too. Without it the
@@ -2051,18 +2044,6 @@ func (s *defaultOpenAIAccountScheduler) ReportScheduleResult(accountID int64, re
 	}
 	decision := s.stats.reportWithHealth(accountID, report, health)
 	if s.service == nil || accountID <= 0 {
-		return
-	}
-	if report.SkipAutomaticHealthActions {
-		if !decision.blockUntil.IsZero() || !decision.durableUntil.IsZero() {
-			slog.Debug("openai.account_auto_health_action_skipped",
-				"account_id", accountID,
-				"reason", decision.reason,
-				"durable_reason", decision.durableReason,
-				"status_code", decision.statusCode,
-				"failure_kind", decision.failureKind,
-			)
-		}
 		return
 	}
 	if report.Success && decision.blockUntil.IsZero() && decision.durableUntil.IsZero() {
@@ -2787,9 +2768,8 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 	}
 	accountID := account.ID
 	report := OpenAIAccountScheduleReport{
-		Success:                    success,
-		FirstTokenMs:               firstTokenMs,
-		SkipAutomaticHealthActions: isOpenAIWirePreserveAccount(account),
+		Success:      success,
+		FirstTokenMs: firstTokenMs,
 	}
 	var err error
 	if len(observedErr) > 0 {
@@ -2814,7 +2794,7 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 	if s != nil && s.rateLimitService != nil {
 		if success {
 			s.rateLimitService.ObserveOpenAIAPIKeyHealthSuccess(context.Background(), account)
-		} else if err != nil && !isOpenAIWirePreserveAccount(account) {
+		} else if err != nil {
 			healthTripped = s.rateLimitService.ObserveOpenAIAPIKeyHealthFailure(context.Background(), account, err)
 		}
 	}
@@ -2840,9 +2820,6 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 // scheduler-result path, for example after semantic response bytes were sent.
 func (s *OpenAIGatewayService) ObserveOpenAIAccountHealthFailure(ctx context.Context, account *Account, observedErr error) bool {
 	if s == nil || s.rateLimitService == nil || account == nil || observedErr == nil {
-		return false
-	}
-	if isOpenAIWirePreserveAccount(account) {
 		return false
 	}
 	return s.rateLimitService.ObserveOpenAIAPIKeyHealthFailure(ctx, account, observedErr)

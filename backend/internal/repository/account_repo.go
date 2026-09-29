@@ -2280,14 +2280,6 @@ func (r *accountRepository) ListModelAvailabilityCandidates(
 	return r.accountsToService(ctx, accounts)
 }
 
-// ListOpenAIWirePreserveCandidates returns active, explicitly schedulable
-// OpenAI accounts without transient runtime predicates. The gateway applies
-// the remaining provider/manual-state checks and only uses this query to
-// recover accounts paused by its own health feedback loops.
-func (r *accountRepository) ListOpenAIWirePreserveCandidates(ctx context.Context, groupID *int64, includeGrouped bool) ([]service.Account, error) {
-	return r.ListModelAvailabilityCandidates(ctx, groupID, []string{service.PlatformOpenAI}, includeGrouped)
-}
-
 func (r *accountRepository) SetRateLimited(ctx context.Context, id int64, resetAt time.Time) error {
 	now := time.Now()
 	_, err := r.client.Account.Update().
