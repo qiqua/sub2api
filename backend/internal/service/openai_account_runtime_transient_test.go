@@ -59,6 +59,28 @@ func TestHandleOpenAITransientError_TransientStatusesUseModelScope(t *testing.T)
 	}
 }
 
+func TestHandleOpenAITransientError_PassthroughAPIKeyDoesNotCreateModelCooldown(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	svc.rateLimitService = NewRateLimitService(transientCooldownAccountRepo{}, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:       5199,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra:    map[string]any{"openai_passthrough": true},
+	}
+
+	for range 3 {
+		require.False(t, svc.handleOpenAIAccountUpstreamError(
+			context.Background(), account, http.StatusServiceUnavailable, http.Header{},
+			[]byte(`{"error":{"message":"temporary upstream failure"}}`), "gpt-5.6-sol",
+		))
+	}
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.False(t, svc.isOpenAIAccountModelRuntimeBlocked(account, "gpt-5.6-sol"),
+		"ordinary passthrough 5xx must remain request-scoped instead of parking the only account")
+}
+
 func TestHandleOpenAITransientError_529RemainsOverloadOnly(t *testing.T) {
 	require.False(t, shouldCooldownOpenAITransientUpstreamError(529, []byte(`{"error":{"message":"overloaded"}}`)))
 }

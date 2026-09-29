@@ -2109,6 +2109,24 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 	return false
 }
 
+const openAIWirePreservingPassthroughExtraKey = "openai_passthrough_wire_preserve"
+
+// IsOpenAIWirePreservingPassthroughEnabled reports whether an OpenAI passthrough
+// account should keep client request semantics intact. Authentication headers,
+// billing, concurrency, audit, endpoint/model routing, and explicit local policy
+// checks still apply; this switch only disables compatibility rewrites that are
+// not required for the selected upstream protocol.
+//
+// The setting is deliberately opt-in so existing accounts keep their historical
+// compatibility behavior until an administrator verifies the upstream contract.
+func (a *Account) IsOpenAIWirePreservingPassthroughEnabled() bool {
+	if a == nil || !a.IsOpenAIPassthroughEnabled() || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra[openAIWirePreservingPassthroughExtraKey].(bool)
+	return ok && enabled
+}
+
 // IsOpenAIResponsesWebSocketV2Enabled 返回 OpenAI 账号是否开启 Responses WebSocket v2。
 //
 // 分类型新字段：

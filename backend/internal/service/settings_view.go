@@ -274,7 +274,6 @@ type SystemSettings struct {
 
 	// OpenAI 账号调度
 	OpenAILowUpstreamRatePriorityEnabled                   bool
-	OpenAILowUpstreamRatePriorityEnabled                   bool
 	OpenAIOAuthSchedulingRateMultiplier                    *float64
 	OpenAIFirstOutputTimeoutSeconds                        int
 	OpenAIHighEffortFirstOutputTimeoutSeconds              int
@@ -283,7 +282,6 @@ type SystemSettings struct {
 	OpenAIFirstOutputMaxSwitches                           int
 	OpenAIFirstOutputPenalizeAccount                       bool
 	StreamDataIntervalTimeout                              int
-	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool

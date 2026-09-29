@@ -623,6 +623,9 @@ export default {
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',
+        wirePreserve: 'Preserve request wire format',
+        wirePreserveDesc:
+          'Only applies when automatic passthrough is enabled. Keeps the client request body, business fields, and Codex client headers, while skipping non-essential compatibility rewrites, fingerprint convergence, routing hints, and automatic compatibility retries. Authentication replacement, billing, concurrency, audit, permissions, and session isolation remain enabled. Use for a fully compatible OpenAI/Codex upstream.',
         flattenNamespaces: 'Flatten Codex namespace tools (compatibility)',
         flattenNamespacesDesc:
           'Disabled by default: Codex namespace tool declarations are forwarded as-is on /responses, which is what the ChatGPT Codex backend expects. Enable only when this OAuth account is routed to a relay that rejects namespace tools — flattening renames them to namespace__tool, which breaks models that address collaboration tools as functions.<namespace>.<tool>. Compaction requests always flatten regardless of this switch.',

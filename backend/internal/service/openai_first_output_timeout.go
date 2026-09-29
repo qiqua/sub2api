@@ -396,7 +396,8 @@ func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 		account.ID, originalModel, reasoningEffort, phase, attemptIndex, elapsed, totalElapsed, timeout,
 	)
 	requestID := strings.TrimSpace(responseHeaders.Get("x-request-id"))
-	penalizeAccount := s.openAIFirstOutputPenalizeAccount()
+	penalizeAccount := s.openAIFirstOutputPenalizeAccount() &&
+		(account == nil || !account.IsOpenAIWirePreservingPassthroughEnabled())
 	logger.FromContext(ctx).With(
 		zap.String("component", "service.openai_gateway"),
 		zap.Int64("account_id", account.ID),

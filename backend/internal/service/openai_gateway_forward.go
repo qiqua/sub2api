@@ -24,11 +24,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
-	filteredBody, filterErr := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
-	if filterErr != nil {
-		return nil, filterErr
+	wirePreserve := account != nil && account.IsOpenAIWirePreservingPassthroughEnabled()
+	var err error
+	if !wirePreserve {
+		filteredBody, filterErr := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+		body = filteredBody
 	}
-	body = filteredBody
 	clearGrokResponsesClientToolMapping(c)
 	clearOpenAIResponsesClientToolMapping(c)
 	clearOpenAIResponsesNamespaceNames(c)
@@ -58,29 +62,35 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
 	}
 
-	normalizedBody, normalized, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, account, body)
-	if err != nil {
-		return nil, err
+	if !wirePreserve {
+		normalizedBody, normalized, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, account, body)
+		if err != nil {
+			return nil, err
+		}
+		if normalized {
+			body = normalizedBody
+		}
 	}
-	if normalized {
-		body = normalizedBody
-	}
-	legacyIngressBody, legacyIngressChanged, legacyIngressErr := normalizeOpenAIResponsesLegacyIngress(body)
-	if legacyIngressErr != nil {
-		return nil, legacyIngressErr
-	}
-	if legacyIngressChanged {
-		body = legacyIngressBody
+	if !wirePreserve {
+		legacyIngressBody, legacyIngressChanged, legacyIngressErr := normalizeOpenAIResponsesLegacyIngress(body)
+		if legacyIngressErr != nil {
+			return nil, legacyIngressErr
+		}
+		if legacyIngressChanged {
+			body = legacyIngressBody
+		}
 	}
 	// 在分流到 passthrough / Codex transform / 原生 ChatCompletions 之前统一修正
 	// 显式为 null 的工具 Schema type，否则 upstream 的 400 会被归一成可重试的 502，
 	// 同一份坏定义在账号池里反复重放。
-	if sanitizedToolBody, toolSchemaSanitized, toolSchemaErr := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); toolSchemaErr != nil {
-		return nil, toolSchemaErr
-	} else if toolSchemaSanitized {
-		body = sanitizedToolBody
+	if !wirePreserve {
+		if sanitizedToolBody, toolSchemaSanitized, toolSchemaErr := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); toolSchemaErr != nil {
+			return nil, toolSchemaErr
+		} else if toolSchemaSanitized {
+			body = sanitizedToolBody
+		}
 	}
-	if account.IsOpenAIOAuthLike() {
+	if !wirePreserve && account.IsOpenAIOAuthLike() {
 		reasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningMode(body, account.GetMappedModel(gjson.GetBytes(body, "model").String()))
 		if reasoningErr != nil {
 			return nil, fmt.Errorf("normalize OpenAI Responses reasoning.mode: %w", reasoningErr)
@@ -90,7 +100,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 	responsesLite := account.IsOpenAI() && isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader))
-	if responsesLite {
+	if !wirePreserve && responsesLite {
 		liteBody, changed, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
 		if liteErr != nil {
 			param := "tools"
@@ -177,7 +187,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if account.IsAnthropicProtocol() {
 		return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, reqModel)
 	}
-	if account.IsOpenAIApiKey() {
+	if account.IsOpenAIApiKey() && !wirePreserve {
 		if normalized, changed, normalizeErr := normalizeOpenAIParallelToolCallsWithoutTools(body, responsesLite); normalizeErr != nil {
 			return nil, normalizeErr
 		} else if changed {
@@ -199,7 +209,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
-	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
+	if !wirePreserve && account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
 		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
 		if reasoningErr != nil {
 			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
@@ -1031,7 +1041,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	firstOutputTimeout := time.Duration(0)
 	firstOutputDeadline := time.Time{}
 	firstOutputAttemptWait := time.Duration(0)
-	if reqStream && account.Platform == PlatformOpenAI {
+	if reqStream && account.Platform == PlatformOpenAI && !account.IsOpenAIWirePreservingPassthroughEnabled() {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffortValue)
 		if firstOutputTimeout > 0 {
 			firstOutputDeadline, firstOutputAttemptWait = s.openAIFirstOutputAttemptDeadline(c, startTime, firstOutputTimeout)

@@ -48,6 +48,95 @@ func TestOpenAIGatewayService_SelectAccountByPreviousResponseID_Hit(t *testing.T
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountByPreviousResponseID_SingleAccountRuntimeBlockKeepsSticky(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(2301)
+	account := Account{
+		ID:          2302,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 2,
+		GroupIDs:    []int64{groupID},
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_enabled": true,
+		},
+	}
+	cache := &stubGatewayCache{}
+	store := NewOpenAIWSStateStore(cache)
+	cfg := newOpenAIWSV2TestConfig()
+	snapshotCache := &openAISnapshotCacheStub{
+		snapshotAccounts: []*Account{&account},
+		accountsByID:     map[int64]*Account{account.ID: &account},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{account}},
+		cache:              cache,
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+		openaiWSStateStore: store,
+		schedulerSnapshot:  &SchedulerSnapshotService{cache: snapshotCache},
+	}
+
+	// The model-scoped breaker is transient and leaves the account's persisted
+	// schedulable fields intact, matching the failure mode seen in production.
+	svc.recordOpenAIAccountModelTransientFailure(&account, "gpt-5.1", time.Now())
+	svc.recordOpenAIAccountModelTransientFailure(&account, "gpt-5.1", time.Now())
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(&account, "gpt-5.1"))
+	require.NoError(t, store.BindResponseAccount(ctx, groupID, "resp_prev_single_runtime", account.ID, time.Hour))
+
+	selection, err := svc.SelectAccountByPreviousResponseID(ctx, &groupID, "resp_prev_single_runtime", "gpt-5.1", nil, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection, "a single-account pool must not turn a transient breaker into a sticky 503")
+	require.NotNil(t, selection.Account)
+	require.Equal(t, account.ID, selection.Account.ID)
+	boundAccountID, getErr := store.GetResponseAccount(ctx, groupID, "resp_prev_single_runtime")
+	require.NoError(t, getErr)
+	require.Equal(t, account.ID, boundAccountID, "the response binding must survive a transient single-account block")
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAIGatewayService_SelectAccountByPreviousResponseID_MultiAccountRuntimeBlockClearsSticky(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(2303)
+	blocked := Account{
+		ID:          2304,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_enabled": true,
+		},
+	}
+	healthy := blocked
+	healthy.ID = 2305
+	cache := &stubGatewayCache{}
+	store := NewOpenAIWSStateStore(cache)
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{blocked, healthy}},
+		cache:              cache,
+		cfg:                newOpenAIWSV2TestConfig(),
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+		openaiWSStateStore: store,
+	}
+	svc.recordOpenAIAccountModelTransientFailure(&blocked, "gpt-5.1", time.Now())
+	svc.recordOpenAIAccountModelTransientFailure(&blocked, "gpt-5.1", time.Now())
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(&blocked, "gpt-5.1"))
+	require.NoError(t, store.BindResponseAccount(ctx, groupID, "resp_prev_multi_runtime", blocked.ID, time.Hour))
+
+	selection, err := svc.SelectAccountByPreviousResponseID(ctx, &groupID, "resp_prev_multi_runtime", "gpt-5.1", nil, false)
+	require.NoError(t, err)
+	require.Nil(t, selection, "multi-account pools must continue to reject a runtime-blocked sticky account")
+	boundAccountID, getErr := store.GetResponseAccount(ctx, groupID, "resp_prev_multi_runtime")
+	require.NoError(t, getErr)
+	require.Zero(t, boundAccountID, "multi-account failover must clear the stale response binding")
+}
+
 func TestOpenAIGatewayService_SelectAccountByPreviousResponseID_QuotaAutoPausedMiss(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(23)

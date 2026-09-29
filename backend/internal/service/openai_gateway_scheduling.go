@@ -395,7 +395,8 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 	if account.Platform != platform || !account.IsOpenAICompatible() {
 		return "platform_mismatch"
 	}
-	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) &&
+		!isOpenAIWirePreserveAccountSchedulableForModel(ctx, account, requestedModel) {
 		if account.IsSchedulable() {
 			return "model_rate_limited"
 		}
@@ -857,6 +858,23 @@ func openAIAllowRuntimeBlockedSingleAccount(accounts []Account) bool {
 	return len(accounts) == 1
 }
 
+// allowRuntimeBlockedSingleAccountForPreviousResponse keeps the previous-response
+// sticky path consistent with the normal scheduler. A runtime breaker is a
+// transient signal; when the group has exactly one candidate, the request must
+// still be allowed to reach that account instead of turning an existing response
+// chain into a deterministic 503. Persisted cooldowns remain enforced by
+// getSchedulableAccount/shouldClearStickySession.
+func (s *OpenAIGatewayService) allowRuntimeBlockedSingleAccountForPreviousResponse(ctx context.Context, groupID *int64, accountID int64) bool {
+	if s == nil || accountID <= 0 {
+		return false
+	}
+	accounts, err := s.listSchedulableAccounts(ctx, groupID, PlatformOpenAI)
+	if err != nil || !openAIAllowRuntimeBlockedSingleAccount(accounts) {
+		return false
+	}
+	return accounts[0].ID == accountID
+}
+
 func (s *OpenAIGatewayService) logOpenAISingleAccountRuntimeBlockIgnored(groupID *int64, account *Account, requestedModel string, layer string) {
 	if s == nil || account == nil || !s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 		return
@@ -985,9 +1003,13 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		return nil
 	}
 
-	// 检查账号是否需要清理粘性会话
-	// Check if sticky session should be cleared
-	if shouldClearStickySession(account, requestedModel) {
+	// Check account-level state while allowing an opted-in wire-preserve account
+	// to survive gateway-owned automatic pauses.
+	stickyUnavailable := shouldClearStickySession(account, requestedModel)
+	if isOpenAIWirePreserveAccount(account) {
+		stickyUnavailable = !isOpenAIWirePreserveAccountSchedulableForModel(ctx, account, requestedModel)
+	}
+	if stickyUnavailable {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
@@ -1001,11 +1023,12 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
-	if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
+	if s.isOpenAIAccountRuntimeBlockedForScheduling(account, requestedModel) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
-	account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability)
+	allowRuntimeBlocked := isOpenAIWirePreserveAccount(account) && !openAIWirePreserveHasNonBypassableAccountState(account)
+	account = s.recheckSelectedOpenAIAccountFromDBWithRuntimeBlockPolicy(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability, allowRuntimeBlocked)
 	if account == nil || !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
@@ -1218,6 +1241,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			account, err := s.getSchedulableAccount(ctx, accountID)
 			if err == nil {
 				clearSticky := shouldClearStickySession(account, requestedModel)
+				if isOpenAIWirePreserveAccount(account) {
+					clearSticky = !isOpenAIWirePreserveAccountSchedulableForModel(ctx, account, requestedModel)
+				}
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
@@ -1227,7 +1253,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else if !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-					} else if !allowRuntimeBlocked && s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
+					} else if !allowRuntimeBlocked && s.isOpenAIAccountRuntimeBlockedForScheduling(account, requestedModel) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel, requireCompact) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1296,7 +1322,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			filterStats.exclude("shadow_parent_unhealthy")
 			continue
 		}
-		if s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel) {
+		if s.isOpenAIAccountRuntimeBlockedForScheduling(acc, requestedModel) {
 			if !allowRuntimeBlocked {
 				filterStats.exclude("runtime_blocked")
 				continue
@@ -1552,6 +1578,10 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 			return accounts, err
 		}
 		accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
+		if platform == PlatformOpenAI {
+			includeGrouped := groupID != nil || (s.cfg != nil && s.cfg.RunMode == config.RunModeSimple)
+			accounts = s.appendOpenAIWirePreserveCandidates(ctx, groupID, accounts, includeGrouped)
+		}
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 		}
@@ -1570,6 +1600,10 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
 	accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
+	if platform == PlatformOpenAI {
+		includeGrouped := groupID != nil || (s.cfg != nil && s.cfg.RunMode == config.RunModeSimple)
+		accounts = s.appendOpenAIWirePreserveCandidates(ctx, groupID, accounts, includeGrouped)
+	}
 	if platform == PlatformGrok {
 		accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 	}
@@ -1615,13 +1649,13 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountBeforeProfitW
 	if !parentHealthyForShadow(fresh, s.parentAccountLookup(ctx)) {
 		return nil
 	}
-	if !allowRuntimeBlocked && s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel) {
+	if !allowRuntimeBlocked && s.isOpenAIAccountRuntimeBlockedForScheduling(fresh, requestedModel) {
 		return nil
 	}
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
 		return nil
 	}
-	if s.isOpenAIProxyStreamQuarantined(ctx, fresh) {
+	if s.isOpenAIProxyStreamQuarantinedForScheduling(ctx, fresh) {
 		return nil
 	}
 	return fresh
@@ -1674,10 +1708,10 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBBeforeProfitWit
 		if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
 			return nil
 		}
-		if !allowRuntimeBlocked && s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
+		if !allowRuntimeBlocked && s.isOpenAIAccountRuntimeBlockedForScheduling(account, requestedModel) {
 			return nil
 		}
-		if s.isOpenAIProxyStreamQuarantined(ctx, account) {
+		if s.isOpenAIProxyStreamQuarantinedForScheduling(ctx, account) {
 			return nil
 		}
 		return account
@@ -1699,13 +1733,13 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBBeforeProfitWit
 	if !parentHealthyForShadow(latest, s.parentAccountLookup(ctx)) {
 		return nil
 	}
-	if !allowRuntimeBlocked && s.isOpenAIAccountRequestRuntimeBlocked(latest, requestedModel) {
+	if !allowRuntimeBlocked && s.isOpenAIAccountRuntimeBlockedForScheduling(latest, requestedModel) {
 		return nil
 	}
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, latest) {
 		return nil
 	}
-	if s.isOpenAIProxyStreamQuarantined(ctx, latest) {
+	if s.isOpenAIProxyStreamQuarantinedForScheduling(ctx, latest) {
 		return nil
 	}
 	return latest
@@ -1769,6 +1803,9 @@ func (s *OpenAIGatewayService) filterOpenAIAccountsBySchedulingThreshold(ctx con
 
 func (s *OpenAIGatewayService) isOpenAIAccountBlockedBySchedulingThreshold(ctx context.Context, account *Account) bool {
 	if s == nil || s.rateLimitService == nil || account == nil {
+		return false
+	}
+	if isOpenAIWirePreserveAccount(account) {
 		return false
 	}
 	return s.rateLimitService.ApplyAccountSchedulingThreshold(ctx, account)

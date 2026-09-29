@@ -123,8 +123,6 @@ func TestOpenAINativeMetadataAndKeepaliveDoNotDisarmFirstOutputTimeout(t *testin
 		t.Fatal("synthetic upstream writer did not exit")
 	}
 }
-	}
-}
 
 func TestOpenAIResponsesTTFTDefaultsToSemanticOutput(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
