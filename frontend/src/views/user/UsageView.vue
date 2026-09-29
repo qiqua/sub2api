@@ -77,7 +77,7 @@
       </UserRequestLogsTable>
     </div>
 
-    <div class="app-page-scroll space-y-6 hidden">
+    <div class="space-y-6 hidden">
       <UsageStatsCards :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
 
       <div class="space-y-4">

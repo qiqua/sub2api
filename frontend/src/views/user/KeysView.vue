@@ -2584,22 +2584,6 @@ onUnmounted(() => {
 
 .keys-data-table :deep(th) { padding-top: 0.75rem; padding-bottom: 0.75rem; }
 
-.keys-page-layout :deep(.layout-section-scrollable) {
-  flex: none;
-  overflow: visible;
-}
-
-.keys-page-layout :deep(.table-scroll-container) {
-  height: auto;
-  overflow: hidden;
-}
-
-.keys-page-layout :deep(.table-wrapper) {
-  flex: none;
-  overflow-x: auto;
-  overflow-y: visible;
-}
-
 .keys-row-actions { display: flex; align-items: center; gap: 0.4rem; white-space: nowrap; }
 .keys-action-button {
   display: inline-flex;
