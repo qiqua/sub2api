@@ -116,6 +116,7 @@ func ProvideGatewayHandler(
 	settingService *service.SettingService,
 	coordinator *securityaudit.Coordinator,
 	apiKeyAutoRouter *service.APIKeyAutoRouter,
+	geminiCachedContentService *service.GeminiCachedContentService,
 ) *GatewayHandler {
 	h := NewGatewayHandler(
 		gatewayService,
@@ -136,6 +137,7 @@ func ProvideGatewayHandler(
 		apiKeyAutoRouter,
 	)
 	h.securityAuditCoordinator = coordinator
+	h.geminiCachedContentService = geminiCachedContentService
 	return h
 }
 
