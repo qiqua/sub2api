@@ -54,7 +54,7 @@
               <td><span class="status-badge" :class="statusBadgeClass(row)">{{ statusLabel(row) }}</span></td>
               <td><span class="attempt-badge">{{ attemptLabel(row) }}</span></td>
               <td :class="latencyClass(row.first_token_ms)">{{ seconds(row.first_token_ms) }}</td>
-              <td class="metric-cell">{{ tps(row) }}</td>
+              <td class="metric-cell">{{ formatUsageOutputRate(row) }}</td>
               <td :class="latencyClass(row.duration_ms)">{{ seconds(row.duration_ms) }}</td>
               <td class="numeric-cell">{{ compact(row.input_tokens) }}</td>
               <td class="numeric-cell">{{ compact(row.output_tokens) }}</td>
@@ -115,6 +115,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import type { UsageLog } from '@/types'
 import { formatReasoningEffort } from '@/utils/format'
+import { formatUsageOutputRate } from '@/utils/latencyHealth'
 
 type RequestLogRow = UsageLog & {
   http_method?: string | null
@@ -169,7 +170,6 @@ function formatDate(value: string) { const d = new Date(value); return `${String
 function shortId(value: string) { return value ? `${value.slice(0, 10)}...` : '-' }
 function compact(value: number | null | undefined) { const n = Number(value || 0); return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n) }
 function seconds(value: number | null | undefined) { return value == null ? '-' : `${(value / 1000).toFixed(2)}s` }
-function tps(row: UsageLog) { const duration = (Number(row.duration_ms || 0) - Number(row.first_token_ms || 0)) / 1000; return duration > 0 ? `${(Number(row.output_tokens || 0) / duration).toFixed(1)}/s` : '-' }
 function cacheRate(row: UsageLog) { const input = Number(row.input_tokens || 0); const read = Number(row.cache_read_tokens || 0); return input + read ? `${((read / (input + read)) * 100).toFixed(1)}%` : '0.0%' }
 function latencyClass(value: number | null | undefined) { return Number(value || 0) > 10000 ? 'latency-slow' : Number(value || 0) > 5000 ? 'latency-warn' : 'latency-good' }
 function keyName(row: UsageLog) { return row.api_key?.name || props.apiKeyNames[row.api_key_id] || row.api_key_id || '-' }

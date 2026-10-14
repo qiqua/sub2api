@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
@@ -290,4 +291,108 @@ func TestOpenAIWSTurnBillingAPIKeysKeepPreviousTurnUntilItIsRecorded(t *testing.
 	keys.set(4, conn)
 	require.Same(t, conn, keys.forTurn(2, conn), "only the current and previous turn are kept")
 	require.Len(t, keys.keys, 2)
+}
+
+func TestRefreshOpenAIWSTurnBillingAPIKey_AutoRoutedGroup(t *testing.T) {
+	primaryID, selectedID := int64(77), int64(78)
+	authenticated := &service.APIKey{
+		ID: 5, Key: "sk-auto", GroupID: &primaryID, RoutingMode: service.APIKeyRoutingModeAuto,
+		AutoRouteGroupIDs: []int64{selectedID}, User: &service.User{ID: 9},
+		Group: &service.Group{ID: primaryID, Platform: service.PlatformOpenAI, SubscriptionType: service.SubscriptionTypeStandard, RateMultiplier: 1},
+	}
+	selected := &service.Group{ID: selectedID, Platform: service.PlatformOpenAI, SubscriptionType: service.SubscriptionTypeStandard, RateMultiplier: 3}
+	conn := cloneAPIKeyWithGroup(authenticated, selected)
+	for _, test := range []struct {
+		name        string
+		mutateKey   func(*service.APIKey)
+		mutateGroup func(*service.Group)
+		lookupErr   bool
+		groupErr    bool
+		wantRefresh bool
+	}{
+		{name: "refreshes selected group not primary", wantRefresh: true},
+		{name: "key lookup error", lookupErr: true},
+		{name: "selected group lookup error", groupErr: true},
+		{name: "key moved", mutateKey: func(key *service.APIKey) { id := int64(79); key.GroupID = &id; key.Group.ID = id }},
+		{name: "different key", mutateKey: func(key *service.APIKey) { key.ID++ }},
+		{name: "routing disabled", mutateKey: func(key *service.APIKey) { key.RoutingMode = service.APIKeyRoutingModeFixed }},
+		{name: "selected candidate removed", mutateKey: func(key *service.APIKey) { key.AutoRouteGroupIDs = nil }},
+		{name: "primary platform changed", mutateKey: func(key *service.APIKey) { key.Group.Platform = service.PlatformAnthropic }},
+		{name: "primary billing type changed", mutateKey: func(key *service.APIKey) { key.Group.SubscriptionType = service.SubscriptionTypeSubscription }},
+		{name: "selected platform changed", mutateGroup: func(group *service.Group) { group.Platform = service.PlatformAnthropic }},
+		{name: "selected billing type changed", mutateGroup: func(group *service.Group) { group.SubscriptionType = service.SubscriptionTypeSubscription }},
+		{name: "selected identity changed", mutateGroup: func(group *service.Group) { group.ID++ }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			latest := *authenticated
+			primary := *authenticated.Group
+			latest.Group = &primary
+			if test.mutateKey != nil {
+				test.mutateKey(&latest)
+			}
+			group := *selected
+			group.RateMultiplier = 0.3
+			if test.mutateGroup != nil {
+				test.mutateGroup(&group)
+			}
+			lookup := wsTurnAPIKeyLookupFunc(func(context.Context, string) (*service.APIKey, error) {
+				if test.lookupErr {
+					return nil, errors.New("auth unavailable")
+				}
+				return &latest, nil
+			})
+			route := &openAIWSTurnBillingRoute{
+				authenticatedKey: authenticated,
+				lookupGroup: func(_ context.Context, id int64) (*service.Group, error) {
+					require.Equal(t, selectedID, id, "a later turn must not resolve a new route")
+					if test.groupErr {
+						return nil, errors.New("group unavailable")
+					}
+					return &group, nil
+				},
+			}
+			got := refreshOpenAIWSTurnBillingAPIKey(context.Background(), lookup, conn, route)
+			if !test.wantRefresh {
+				require.Same(t, conn, got)
+				return
+			}
+			require.NotSame(t, conn, got)
+			require.Equal(t, selectedID, *got.GroupID)
+			require.Same(t, &group, got.Group)
+			require.Same(t, conn.User, got.User)
+			require.InDelta(t, 3, conn.Group.RateMultiplier, 1e-12)
+		})
+	}
+}
+
+func TestOpenAIWSTurnBillingAPIKeys_AutoRouteRefreshesBillingAndProfitContext(t *testing.T) {
+	repo := newWSGroupPricingAPIKeyRepoStub(1)
+	selectedID := wsGroupPricingGroupID + 1
+	repo.apiKey.RoutingMode = service.APIKeyRoutingModeAuto
+	repo.apiKey.AutoRouteGroupIDs = []int64{selectedID}
+	keyService := newWSGroupPricingAPIKeyService(repo)
+	authenticated, err := keyService.GetByKey(context.Background(), wsGroupPricingKey)
+	require.NoError(t, err)
+	selected := &service.Group{ID: selectedID, Platform: service.PlatformOpenAI, RateMultiplier: 3}
+	conn := cloneAPIKeyWithGroup(authenticated, selected)
+	latestGroup := *selected
+	latestGroup.RateMultiplier = 0.3
+	lookups := 0
+	keys := openAIWSTurnBillingAPIKeys{route: &openAIWSTurnBillingRoute{
+		authenticatedKey: authenticated,
+		lookupGroup: func(_ context.Context, id int64) (*service.Group, error) {
+			lookups++
+			require.Equal(t, selectedID, id)
+			return &latestGroup, nil
+		},
+	}}
+	ctx := context.WithValue(context.Background(), ctxkey.Group, selected)
+	firstCtx := keys.begin(ctx, keyService, 1, conn)
+	require.Same(t, selected, firstCtx.Value(ctxkey.Group))
+	require.Zero(t, lookups)
+	secondCtx := keys.begin(ctx, keyService, 2, conn)
+	require.Same(t, &latestGroup, secondCtx.Value(ctxkey.Group))
+	require.Same(t, &latestGroup, keys.forTurn(2, conn).Group)
+	require.Same(t, selected, keys.forTurn(1, conn).Group)
+	require.Equal(t, 1, lookups)
 }

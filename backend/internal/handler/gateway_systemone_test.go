@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,6 +83,73 @@ func mustAPIKey(t *testing.T, c *gin.Context) *service.APIKey {
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	require.True(t, ok)
 	return apiKey
+}
+
+type systemOneAutoRouteGroupRepo struct {
+	service.GroupRepository
+	groups map[int64]*service.Group
+}
+
+func (r *systemOneAutoRouteGroupRepo) GetByID(_ context.Context, id int64) (*service.Group, error) {
+	return r.groups[id], nil
+}
+
+type systemOneAutoRouteAccountRepo struct {
+	service.AccountRepository
+	accounts map[int64][]service.Account
+}
+
+func (r *systemOneAutoRouteAccountRepo) ListSchedulableByGroupID(_ context.Context, id int64) ([]service.Account, error) {
+	return r.accounts[id], nil
+}
+
+func TestSystemOneAppliesAPIKeyRoutingBeforeScheduling(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		routingMode string
+		wantGroupID int64
+	}{
+		{name: "auto", routingMode: service.APIKeyRoutingModeAuto, wantGroupID: 10},
+		{name: "fixed", routingMode: service.APIKeyRoutingModeFixed, wantGroupID: 9},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, recorder := newTypeSafeGroupContext(t, "/v1/systemone", validSystemOneHandlerBody, service.PlatformTypeSafe)
+			apiKey := mustAPIKey(t, c)
+			apiKey.RoutingMode = tc.routingMode
+			apiKey.AutoRouteGroupIDs = []int64{10}
+			apiKey.Group.Status = service.StatusActive
+			groupRepo := &systemOneAutoRouteGroupRepo{groups: map[int64]*service.Group{
+				9:  apiKey.Group,
+				10: {ID: 10, Platform: service.PlatformTypeSafe, Status: service.StatusActive},
+			}}
+			accountRepo := &systemOneAutoRouteAccountRepo{accounts: map[int64][]service.Account{
+				10: {{ID: 100, Platform: service.PlatformTypeSafe, Status: service.StatusActive, Schedulable: true, Concurrency: 1}},
+			}}
+			capacityService := service.NewGroupCapacityService(accountRepo, groupRepo, nil, nil, nil)
+			slotChecked := false
+			cache := &concurrencyCacheMock{
+				acquireUserSlotFn: func(_ context.Context, _ int64, _ int, _ string) (bool, error) {
+					slotChecked = true
+					routed := mustAPIKey(t, c)
+					require.Equal(t, tc.wantGroupID, *routed.GroupID)
+					require.Equal(t, tc.wantGroupID, routed.Group.ID)
+					return false, errors.New("stop before billing")
+				},
+			}
+			h := &GatewayHandler{
+				cfg:               &config.Config{Gateway: config.GatewayConfig{MaxBodySize: 1 << 20}},
+				gatewayService:    &service.GatewayService{},
+				apiKeyAutoRouter:  service.NewAPIKeyAutoRouter(groupRepo, accountRepo, capacityService),
+				concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 0),
+			}
+
+			h.SystemOne(c)
+
+			require.True(t, slotChecked)
+			require.Equal(t, http.StatusServiceUnavailable, recorder.Code, recorder.Body.String())
+			require.Equal(t, int64(9), *apiKey.GroupID, "routing must not mutate the authenticated key")
+		})
+	}
 }
 
 func TestTypeSafeGroupsRejectNonSystemOneProtocolsBeforeScheduling(t *testing.T) {

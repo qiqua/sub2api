@@ -569,6 +569,32 @@ describe('user KeysView column settings', () => {
     expect(currentConcurrencyColumn?.sortable).toBe(true)
   })
 
+  it.each(['asc', 'desc'] as const)('sorts the production route column in %s order', async (order) => {
+    vi.stubEnv('MODE', 'production')
+    let wrapper: VueWrapper | undefined
+    try {
+      wrapper = await mountView()
+      expect(visibleColumnKeys(wrapper)).toEqual([
+        'name', 'group', 'key', 'status', 'expires_at', 'last_used_at', 'usage', 'actions',
+      ])
+      expect(visibleColumnMeta(wrapper).find((column) => column.key === 'group')?.sortable).toBe(true)
+
+      listKeys.mockClear()
+      wrapper.findComponent({ name: 'DataTable' }).vm.$emit('sort', 'group', order)
+      await flushPromises()
+
+      expect(listKeys).toHaveBeenLastCalledWith(
+        1,
+        20,
+        expect.objectContaining({ sort_by: 'group', sort_order: order }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    } finally {
+      wrapper?.unmount()
+      vi.unstubAllEnvs()
+    }
+  })
+
   it.each([
     { key: 'current_concurrency', order: 'asc' },
     { key: 'group', order: 'asc' },

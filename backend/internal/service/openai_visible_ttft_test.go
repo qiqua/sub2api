@@ -89,11 +89,12 @@ func TestOpenAIMetadataDisarmsFirstEventTimeoutWithoutCountingVisibleTTFT(t *tes
 	}
 }
 
-func TestOpenAINativeMetadataAndKeepaliveDoNotDisarmFirstOutputTimeout(t *testing.T) {
+func TestOpenAINativeMetadataOnlyEOFIsStreamFailureNotFirstEventTimeout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		MaxLineSize:                     defaultMaxLineSize,
-		OpenAIFirstOutputTimeoutSeconds: 1,
+		OpenAIFirstOutputFailoverEnabled: true,
+		MaxLineSize:                      defaultMaxLineSize,
+		OpenAIFirstOutputTimeoutSeconds:  1,
 	}}}
 	reader, writer := io.Pipe()
 	writerDone := make(chan struct{})
@@ -115,7 +116,8 @@ func TestOpenAINativeMetadataAndKeepaliveDoNotDisarmFirstOutputTimeout(t *testin
 	_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "test-model", "test-model")
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	require.False(t, failoverErr.SafeToFailoverAfterWrite)
+	require.JSONEq(t, `{"error":{"type":"upstream_error","message":"OpenAI stream ended before a terminal event"}}`, string(failoverErr.ResponseBody))
 	require.Empty(t, recorder.Body.String())
 	select {
 	case <-writerDone:

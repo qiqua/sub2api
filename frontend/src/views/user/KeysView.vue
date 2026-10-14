@@ -1413,7 +1413,7 @@ const isLegacyTestMode = import.meta.env.MODE === 'test'
 
 const visualColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: false, class: 'keys-col-name' },
-  { key: 'group', label: '路由目标', sortable: false, class: 'keys-col-route' },
+  { key: 'group', label: '路由目标', sortable: true, class: 'keys-col-route' },
   { key: 'key', label: '密钥', sortable: false, class: 'keys-col-secret' },
   { key: 'status', label: t('common.status'), sortable: false, class: 'keys-col-status' },
   { key: 'expires_at', label: t('keys.expiresAt'), sortable: false, class: 'keys-col-expires' },

@@ -44,6 +44,14 @@ func NewAPIKeyAutoRouter(groupRepo GroupRepository, accountRepo AccountRepositor
 	}
 }
 
+// GetGroupForBilling refreshes an already-selected group without selecting a new route.
+func (r *APIKeyAutoRouter) GetGroupForBilling(ctx context.Context, groupID int64) (*Group, error) {
+	if r == nil || r.groupRepo == nil || groupID <= 0 {
+		return nil, nil
+	}
+	return r.groupRepo.GetByID(ctx, groupID)
+}
+
 func (r *APIKeyAutoRouter) Resolve(ctx context.Context, apiKey *APIKey, requestedModel string, options ...APIKeyAutoRouteOption) (*Group, APIKeyAutoRouteDecision, error) {
 	decision := APIKeyAutoRouteDecision{}
 	routeOptions := APIKeyAutoRouteOptions{}

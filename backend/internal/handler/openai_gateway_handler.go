@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2232,13 +2233,20 @@ type openAIWSTurnAPIKeyLookup interface {
 // Key 限额、订阅仍沿用建连快照。只在同一把 Key、同一分组且平台与订阅类型未变时
 // 采用：Key 换组或分组改平台/订阅类型不是调价，该连接按建连分组调度，继续按建连
 // 快照计费；重取失败同样保留建连快照，不断连。
+// 自动路由连接验证主分组与候选资格后，刷新建连时已选分组的定价，不重新选路。
 //
 // 首轮沿用刚经认证中间件取得的建连快照；没有经过 BeforeTurn 的 turn 回退建连
 // 快照。只保留当前与上一个 turn：下一 turn 的 BeforeTurn 先于上一 turn 的
 // AfterTurn 执行时，上一 turn 仍取到自己的快照。
 type openAIWSTurnBillingAPIKeys struct {
-	mu   sync.Mutex
-	keys map[int]*service.APIKey
+	mu    sync.Mutex
+	keys  map[int]*service.APIKey
+	route *openAIWSTurnBillingRoute
+}
+
+type openAIWSTurnBillingRoute struct {
+	authenticatedKey *service.APIKey
+	lookupGroup      func(context.Context, int64) (*service.Group, error)
 }
 
 // begin 在 BeforeTurn 重装利润门前调用：后续 turn 重取计费分组并按 turn 记下，
@@ -2246,7 +2254,7 @@ type openAIWSTurnBillingAPIKeys struct {
 func (k *openAIWSTurnBillingAPIKeys) begin(ctx context.Context, apiKeyService *service.APIKeyService, turn int, conn *service.APIKey) context.Context {
 	turnKey := conn
 	if turn > 1 && apiKeyService != nil {
-		turnKey = refreshOpenAIWSTurnBillingAPIKey(ctx, apiKeyService, conn)
+		turnKey = refreshOpenAIWSTurnBillingAPIKey(ctx, apiKeyService, conn, k.route)
 	}
 	k.set(turn, turnKey)
 	return withOpenAIWSTurnBillingGroup(ctx, turnKey)
@@ -2277,15 +2285,34 @@ func (k *openAIWSTurnBillingAPIKeys) forTurn(turn int, conn *service.APIKey) *se
 
 // refreshOpenAIWSTurnBillingAPIKey 返回本 turn 计费用的 API Key：分组取当前认证
 // 快照，其余字段与建连快照共享。不满足采用条件时原样返回建连快照。
-func refreshOpenAIWSTurnBillingAPIKey(ctx context.Context, lookup openAIWSTurnAPIKeyLookup, conn *service.APIKey) *service.APIKey {
+func refreshOpenAIWSTurnBillingAPIKey(ctx context.Context, lookup openAIWSTurnAPIKeyLookup, conn *service.APIKey, routes ...*openAIWSTurnBillingRoute) *service.APIKey {
 	if lookup == nil || conn == nil || conn.Key == "" || conn.GroupID == nil || conn.Group == nil {
 		return conn
 	}
 	latest, err := lookup.GetByKey(ctx, conn.Key)
-	if err != nil || latest == nil || latest.ID != conn.ID || latest.GroupID == nil || *latest.GroupID != *conn.GroupID {
+	if err != nil || latest == nil || latest.ID != conn.ID || latest.GroupID == nil {
 		return conn
 	}
 	group := latest.Group
+	if len(routes) > 0 && routes[0] != nil {
+		route := routes[0]
+		authenticated := route.authenticatedKey
+		// Authentication still points at the primary group after automatic routing.
+		// Keep the selected group fixed, but refresh its pricing on later turns.
+		if authenticated == nil || authenticated.ID != conn.ID || authenticated.GroupID == nil || authenticated.Group == nil ||
+			*latest.GroupID != *authenticated.GroupID || group == nil || group.ID != authenticated.Group.ID ||
+			group.Platform != authenticated.Group.Platform || group.SubscriptionType != authenticated.Group.SubscriptionType ||
+			service.NormalizeAPIKeyRoutingMode(latest.RoutingMode) != service.APIKeyRoutingModeAuto ||
+			!slices.Contains(latest.AutoRouteGroupIDs, *conn.GroupID) || route.lookupGroup == nil {
+			return conn
+		}
+		group, err = route.lookupGroup(ctx, *conn.GroupID)
+		if err != nil {
+			return conn
+		}
+	} else if *latest.GroupID != *conn.GroupID {
+		return conn
+	}
 	if group == nil || group.ID != conn.Group.ID ||
 		group.Platform != conn.Group.Platform ||
 		group.SubscriptionType != conn.Group.SubscriptionType {
@@ -2657,10 +2684,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	)
 	reqLog = annotateOpenAILargeContextRequest(c, reqLog, h.cfg, "openai.responses_ws", true, firstMessage)
 	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage)
+	authenticatedAPIKey := apiKey
 	if imageIntent {
 		apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel, service.WithAPIKeyAutoRouteImageGenerationRequired())
 	} else {
 		apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel)
+	}
+	var turnBillingRoute *openAIWSTurnBillingRoute
+	if h.apiKeyAutoRouter != nil && authenticatedAPIKey.GroupID != nil && apiKey.GroupID != nil && *authenticatedAPIKey.GroupID != *apiKey.GroupID {
+		turnBillingRoute = &openAIWSTurnBillingRoute{
+			authenticatedKey: authenticatedAPIKey,
+			lookupGroup:      h.apiKeyAutoRouter.GetGroupForBilling,
+		}
 	}
 	ctx = c.Request.Context()
 	setOpsRequestContext(c, reqModel, true)
@@ -3049,7 +3084,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		var turnPricing openAIWSTurnPricing
 		// 后续 turn 的计费分组同样在 BeforeTurn 经认证缓存重取，使分组调价对
 		// 已打开的连接生效。
-		var turnBillingAPIKeys openAIWSTurnBillingAPIKeys
+		turnBillingAPIKeys := openAIWSTurnBillingAPIKeys{route: turnBillingRoute}
 		// Passthrough ingress does not invoke BeforeTurn for the first frame.
 		if err := checkSimpleModeTurnBilling(); err != nil {
 			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
