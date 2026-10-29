@@ -750,18 +750,53 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedCacheRead: floatPtr(0.30e-6),
 		},
 		{
+			name:              "kimi k3.1-pro flagship",
+			model:             "kimi-k3.1-pro",
+			expectedInput:     2e-6,
+			expectedOutput:    floatPtr(10e-6),
+			expectedCacheRead: floatPtr(0.20e-6),
+		},
+		{
+			name:              "kimi k3.1-pro highspeed not shadowed by k3.1-pro",
+			model:             "kimi-k3.1-pro-highspeed",
+			expectedInput:     4e-6,
+			expectedOutput:    floatPtr(20e-6),
+			expectedCacheRead: floatPtr(0.20e-6),
+		},
+		{
+			name:              "kimi k3.1-pro hyphenated variant",
+			model:             "kimi-k3-1-pro",
+			expectedInput:     2e-6,
+			expectedOutput:    floatPtr(10e-6),
+			expectedCacheRead: floatPtr(0.20e-6),
+		},
+		{
+			name:              "kimi k2.7-code",
+			model:             "kimi-k2.7-code",
+			expectedInput:     0.95e-6,
+			expectedOutput:    floatPtr(4e-6),
+			expectedCacheRead: floatPtr(0.19e-6),
+		},
+		{
+			name:              "kimi k2.7-code highspeed not shadowed by k2.7-code",
+			model:             "kimi-k2.7-code-highspeed",
+			expectedInput:     1.90e-6,
+			expectedOutput:    floatPtr(8e-6),
+			expectedCacheRead: floatPtr(0.38e-6),
+		},
+		{
 			name:              "kimi k2.6 flagship",
 			model:             "kimi-k2.6",
 			expectedInput:     0.95e-6,
 			expectedOutput:    floatPtr(4e-6),
-			expectedCacheRead: floatPtr(0.15e-6),
+			expectedCacheRead: floatPtr(0.16e-6),
 		},
 		{
 			name:              "kimi for coding explicit alias",
 			model:             "kimi-for-coding",
 			expectedInput:     0.95e-6,
 			expectedOutput:    floatPtr(4e-6),
-			expectedCacheRead: floatPtr(0.15e-6),
+			expectedCacheRead: floatPtr(0.16e-6),
 		},
 		{
 			name:              "kimi k2.5",
@@ -784,13 +819,13 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedOutput:    floatPtr(2.24e-6),
 			expectedCacheRead: floatPtr(0.14e-6),
 		},
-		// 关键：k2.6 / k2.5 / k2-thinking 必须先于 k2 匹配
+		// 关键：k2.7-code / k2.6 / k2.5 / k2-thinking 必须先于 k2 匹配
 		{
 			name:              "kimi k2.6 vs k2 ordering",
 			model:             "kimi-k2.6",
 			expectedInput:     0.95e-6, // = k2.6 不是 k2 的 0.56e-6
 			expectedOutput:    floatPtr(4e-6),
-			expectedCacheRead: floatPtr(0.15e-6),
+			expectedCacheRead: floatPtr(0.16e-6),
 		},
 		{
 			name:              "kimi k2 thinking hyphenated variant",
