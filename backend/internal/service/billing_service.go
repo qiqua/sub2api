@@ -1045,8 +1045,68 @@ func (s *BillingService) initFallbackPricing() {
 	}
 }
 
-// getFallbackPricing 根据模型系列获取回退价格
+// vendorPrefixStrippedModel 去掉模型名的厂商/线路前缀，返回最后一段。
+// 例：workbuddy/deepseek-v4.1-flash → deepseek-v4.1-flash；
+// models/gemini-2.5-pro → gemini-2.5-pro（与 LiteLLM 目录的 TrimPrefix("models/") 口径一致）。
+// 无前缀或前缀后为空时返回空串，调用方据此跳过前缀兜底。
+func vendorPrefixStrippedModel(modelLower string) string {
+	idx := strings.LastIndex(modelLower, "/")
+	if idx < 0 || idx+1 >= len(modelLower) {
+		return ""
+	}
+	tail := strings.TrimSpace(modelLower[idx+1:])
+	if tail == "" || tail == modelLower {
+		return ""
+	}
+	return tail
+}
+
+// gatewayModelAliases 把网关（本机部署的 magpie）对外暴露的短模型 id 映射到真实模型名，
+// 让这些别名也能复用内置价表的定价，而不是因为查不到条目按 0 计费。
+// 只收录内置价表里有对应条目的 id；qwen 系列（qmodel_38max / qfmodel）内置表暂无对应价卡。
+var gatewayModelAliases = map[string]string{
+	"dfmodel":       "deepseek-v4-flash", // qoder-cn/dfmodel → DeepSeek-Flash
+	"dmodel":        "deepseek-v4-pro",   // qoder-cn/dmodel  → DeepSeek-V4-Pro
+	"gmodel":        "glm-5.3",           // qoder-cn/gmodel  → GLM-5.3
+	"gfmodel":       "glm-5.3-flash",     // qoder-cn/gfmodel → GLM-5.3-Flash
+	"kmodel_latest": "kimi-k3",           // qoder-cn/kmodel_latest → Kimi-K3.1-Pro
+	"kmodel":        "kimi-k2.6",         // qoder-cn/kmodel  → Kimi-K2.8-Preview
+	"mmodel":        "minimax-m3",        // qoder-cn/mmodel  → MiniMax-M3.1-Flash
+}
+
+// gatewayModelAliasTarget 返回网关短 id 对应的真实模型名，未配置返回空串。
+func gatewayModelAliasTarget(modelLower string) string {
+	return gatewayModelAliases[strings.ToLower(strings.TrimSpace(modelLower))]
+}
+
+// getFallbackPricing 根据模型系列获取回退价格。
+// 匹配顺序：完整模型名（精确/系列匹配）→ 网关短 id 别名 → 去掉厂商前缀后的最后一段
+// （及其短 id 别名）。这样带自定义线路前缀的模型名（如 workbuddy/deepseek-v4.1-flash、
+// qoder-cn/dfmodel）都能直接复用内置价表里同名模型的定价，不必逐条配置渠道定价规则，
+// 也不会再按 0 计费。
 func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
+	modelLower := normalizeAntigravityClaudeTierAlias(strings.ToLower(strings.TrimSpace(model)))
+	if pricing := s.getFallbackPricingExact(modelLower); pricing != nil {
+		return pricing
+	}
+	if target := gatewayModelAliasTarget(modelLower); target != "" {
+		if pricing := s.getFallbackPricingExact(target); pricing != nil {
+			return pricing
+		}
+	}
+	if alias := vendorPrefixStrippedModel(modelLower); alias != "" {
+		if pricing := s.getFallbackPricingExact(alias); pricing != nil {
+			return pricing
+		}
+		if target := gatewayModelAliasTarget(alias); target != "" {
+			return s.getFallbackPricingExact(target)
+		}
+	}
+	return nil
+}
+
+// getFallbackPricingExact 按完整模型名在内置价表里匹配（不做厂商前缀剥离）。
+func (s *BillingService) getFallbackPricingExact(model string) *ModelPricing {
 	modelLower := normalizeAntigravityClaudeTierAlias(strings.ToLower(model))
 	if modelLower == "jev-latest" {
 		return s.fallbackPrices["jev-latest"]

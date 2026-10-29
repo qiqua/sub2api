@@ -442,3 +442,36 @@ func TestCalculateCostUnified_DeepseekProRetainsRatesAfterSeptember14(t *testing
 	require.InDelta(t, proTotal, versioned.TotalCost, 1e-10,
 		"versioned pro names must retain Pro rates on September 14")
 }
+
+// ---------------------------------------------------------------------------
+// 带网关前缀的模型名（magpie 对外暴露的 provider/model）复用内置价
+// ---------------------------------------------------------------------------
+
+func TestGetModelPricing_VendorPrefixedModelReusesBuiltinRates(t *testing.T) {
+	// 目录里没有这些带前缀的条目，必须靠内置价表的「去前缀 + 网关短 id 别名」命中。
+	bs := NewBillingService(&config.Config{}, &PricingService{
+		pricingData: map[string]*LiteLLMModelPricing{},
+	})
+
+	tests := []struct {
+		model                    string
+		input, output, cacheRead float64
+	}{
+		// 带厂商前缀，去掉前缀后命中 deepseek-* 的 flash 兜底价。
+		{"workbuddy/deepseek-v4.1-flash", 1.5e-7, 6e-7, 3e-9},
+		// 网关短 id：qoder-cn/dfmodel = DeepSeek-Flash，qoder-cn/dmodel = DeepSeek-V4-Pro。
+		{"qoder-cn/dfmodel", 1.5e-7, 6e-7, 3e-9},
+		{"qoder-cn/dmodel", 6.6e-7, 1.98e-6, 2.2e-8},
+		// 无前缀写法同样生效。
+		{"dfmodel", 1.5e-7, 6e-7, 3e-9},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			pricing, err := bs.GetModelPricing(tt.model)
+			require.NoError(t, err)
+			require.InDelta(t, tt.input, pricing.InputPricePerToken, 1e-15)
+			require.InDelta(t, tt.output, pricing.OutputPricePerToken, 1e-15)
+			require.InDelta(t, tt.cacheRead, pricing.CacheReadPricePerToken, 1e-15)
+		})
+	}
+}
