@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
 )
@@ -38,6 +39,10 @@ func (r *ingressRejectRepoStub) ListIngressRejects(context.Context, *OpsIngressR
 }
 
 func TestOpsIngressRejectAggregatorUsesGlobalBucketCapacity(t *testing.T) {
+	synctest.Test(t, testOpsIngressRejectAggregatorUsesGlobalBucketCapacity)
+}
+
+func testOpsIngressRejectAggregatorUsesGlobalBucketCapacity(t *testing.T) {
 	repo := &ingressRejectRepoStub{}
 	a := NewOpsIngressRejectAggregator(repo)
 	a.Start()
