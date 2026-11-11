@@ -25,8 +25,8 @@ func (w *usageMetadataWriter) Unwrap() http.ResponseWriter {
 }
 
 func (w *usageMetadataWriter) recordStatus() {
-	if w.ResponseWriter.Written() {
-		w.capture.RecordStatus(w.ResponseWriter.Status())
+	if w.Written() {
+		w.capture.RecordStatus(w.Status())
 	}
 }
 

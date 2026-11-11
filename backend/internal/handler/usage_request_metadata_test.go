@@ -97,7 +97,7 @@ func TestUsageRequestMetadataCapturesWebSocketHandshake(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		got <- requestmeta.FromContext(usageRecordContext(c.Request.Context(), context.Background()))
 	})
 	server := httptest.NewServer(router)
@@ -106,7 +106,7 @@ func TestUsageRequestMetadataCapturesWebSocketHandshake(t *testing.T) {
 	defer cancel()
 	conn, _, err := coderws.Dial(ctx, server.URL+"/responses", nil)
 	require.NoError(t, err)
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	select {
 	case values := <-got:
 		require.Equal(t, "GET", *values.HTTPMethod)
