@@ -208,9 +208,14 @@
               <div class="keys-usage-period">
                 <div class="keys-usage-total">
                   <span>今日</span>
-                  <strong>${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}</strong>
+                  <span
+                    v-if="usageLoading && !usageStats[row.id]"
+                    data-test="usage-pending"
+                    class="inline-block h-3 w-14 animate-pulse rounded bg-gray-200 dark:bg-dark-600"
+                  />
+                  <strong v-else>${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}</strong>
                 </div>
-                <div class="keys-usage-breakdown">
+                <div v-if="!usageLoading || usageStats[row.id]" class="keys-usage-breakdown">
                   <span>余额消耗 $0.0000</span>
                   <span>订阅消耗 ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}</span>
                 </div>
@@ -218,9 +223,13 @@
               <div class="keys-usage-period">
                 <div class="keys-usage-total">
                   <span>近30天</span>
-                  <strong>${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}</strong>
+                  <span
+                    v-if="usageLoading && !usageStats[row.id]"
+                    class="inline-block h-3 w-14 animate-pulse rounded bg-gray-200 dark:bg-dark-600"
+                  />
+                  <strong v-else>${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}</strong>
                 </div>
-                <div class="keys-usage-breakdown">
+                <div v-if="!usageLoading || usageStats[row.id]" class="keys-usage-breakdown">
                   <span>余额消耗 $0.0000</span>
                   <span>订阅消耗 ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}</span>
                 </div>
@@ -1544,6 +1553,7 @@ const submitting = ref(false)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
+const usageLoading = ref(false)
 const userGroupRates = ref<Record<number, number>>({})
 
 const pagination = ref({
@@ -1907,6 +1917,7 @@ const loadApiKeys = async () => {
   abortController = controller
   const { signal } = controller
   loading.value = true
+  usageLoading.value = false
   try {
     // Build filters
     const filters: {
@@ -1931,18 +1942,10 @@ const loadApiKeys = async () => {
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
-    // Load usage stats for all API keys in the list
+    // 用量统计要聚合 30 天的 usage_logs，可能比列表慢很多：不阻塞表格渲染，单独加载
+    usageLoading.value = response.items.length > 0
     if (response.items.length > 0) {
-      const keyIds = response.items.map((k) => k.id)
-      try {
-        const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal })
-        if (signal.aborted) return
-        usageStats.value = usageResponse.stats
-      } catch (e) {
-        if (!isAbortError(e)) {
-          console.error('Failed to load usage stats:', e)
-        }
-      }
+      void loadUsageStats(response.items.map((k) => k.id), signal)
     }
   } catch (error) {
     if (isAbortError(error)) {
@@ -1952,6 +1955,22 @@ const loadApiKeys = async () => {
   } finally {
     if (abortController === controller) {
       loading.value = false
+    }
+  }
+}
+
+const loadUsageStats = async (keyIds: number[], signal: AbortSignal) => {
+  try {
+    const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal })
+    if (signal.aborted) return
+    usageStats.value = usageResponse.stats
+  } catch (e) {
+    if (!isAbortError(e)) {
+      console.error('Failed to load usage stats:', e)
+    }
+  } finally {
+    if (!signal.aborted) {
+      usageLoading.value = false
     }
   }
 }
