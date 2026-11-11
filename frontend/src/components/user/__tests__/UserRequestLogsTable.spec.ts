@@ -8,7 +8,7 @@ vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
-    useI18n: () => ({ t: (key: string) => key }),
+    useI18n: () => ({ t: (key: string, values?: { count: number }) => key === 'usage.requestLog.attemptCount' ? `${values?.count} attempts` : key }),
   }
 })
 
@@ -40,6 +40,37 @@ describe('UserRequestLogsTable output rate', () => {
     })
 
     expect(wrapper.get('.metric-cell').text()).toBe(expected)
+    wrapper.unmount()
+  })
+})
+
+describe('UserRequestLogsTable request metadata', () => {
+  it.each([
+    { http_method: 'POST', status_code: 201, attempt_count: 3, statusClass: 'is-success' },
+    { http_method: 'GET', status_code: 101, attempt_count: 1, statusClass: 'is-success' },
+    { http_method: 'POST', status_code: 429, attempt_count: 2, statusClass: 'is-warning' },
+    { http_method: 'POST', status_code: 502, attempt_count: 1, statusClass: 'is-error' },
+  ])('renders observed $http_method/$status_code/$attempt_count', (fields) => {
+    const wrapper = mount(UserRequestLogsTable, {
+      props: { data: [{ id: 1, created_at: '2026-11-11T00:00:00Z', ...fields } as UsageLog] },
+      global: { stubs: { Icon: true } },
+    })
+    expect(wrapper.get('.method-badge').text()).toBe(fields.http_method)
+    expect(wrapper.get('.status-badge').text()).toBe(String(fields.status_code))
+    expect(wrapper.get('.status-badge').classes()).toContain(fields.statusClass)
+    expect(wrapper.get('.attempt-badge').text()).toBe(`${fields.attempt_count} attempts`)
+    wrapper.unmount()
+  })
+
+  it('labels historical metadata as unrecorded without inventing successful requests', () => {
+    const wrapper = mount(UserRequestLogsTable, {
+      props: { data: [{ id: 1, created_at: '2026-11-11T00:00:00Z' } as UsageLog] },
+      global: { stubs: { Icon: true } },
+    })
+    for (const selector of ['.method-badge', '.status-badge', '.attempt-badge']) {
+      expect(wrapper.get(selector).text()).toBe('usage.requestLog.notRecorded')
+    }
+    expect(wrapper.get('.status-badge').classes()).toContain('is-unknown')
     wrapper.unmount()
   })
 })

@@ -418,6 +418,7 @@ export default {
       previous: 'Previous',
       next: 'Next',
       attemptCount: '{count} attempts',
+      notRecorded: 'Not recorded',
     },
     type: 'Type',
     specialBilling: 'Special Billing',

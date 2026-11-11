@@ -423,6 +423,7 @@ export default {
       previous: '上一页',
       next: '下一页',
       attemptCount: '{count} 次尝试',
+      notRecorded: '未记录',
     },
     type: '类型',
     specialBilling: '特殊计费',

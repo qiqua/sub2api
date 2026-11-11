@@ -1863,6 +1863,10 @@ export interface UsageLog {
   api_key_id: number
   account_id: number | null
   request_id: string
+  /** Observed request metadata; historical records and uninstrumented transports can be null. */
+  http_method?: string | null
+  status_code?: number | null
+  attempt_count?: number | null
   model: string
   service_tier?: string | null
   reasoning_effort?: string | null

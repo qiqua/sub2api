@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmeta"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -37,7 +38,10 @@ func TestGatewayUsageKeepsModelAfterGinContextReuse(t *testing.T) {
 				AccountGroups: []service.AccountGroup{{AccountID: 9301, GroupID: groupID}},
 			}
 			snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: []*service.Account{account}}, nil, nil, nil, nil)
-			usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 1)}
+			usageRepo := &usageMetadataCapturingRepo{
+				openAIWSUsageHandlerUsageLogRepoStub: &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 1)},
+				metadata:                             make(chan requestmeta.Values, 1),
+			}
 			billingRepo := &compatStreamUsageBillingRepo{}
 			billingCache := service.NewBillingCacheService(newHandlerInflightCache(100), nil, nil, nil, nil, nil, cfg, nil)
 			t.Cleanup(billingCache.Stop)
@@ -66,6 +70,7 @@ func TestGatewayUsageKeepsModelAfterGinContextReuse(t *testing.T) {
 			apiKey := &service.APIKey{ID: 9302, UserID: 9303, GroupID: &groupID, Group: group, User: &service.User{ID: 9303, Balance: 100}}
 			var first *gin.Context
 			router := gin.New()
+			router.Use(OpsErrorLoggerMiddleware(nil))
 			router.POST("/v1/"+endpoint, func(c *gin.Context) {
 				first = c
 				c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.RequestedPublicModel, "public-model-A"))
@@ -97,9 +102,23 @@ func TestGatewayUsageKeepsModelAfterGinContextReuse(t *testing.T) {
 			select {
 			case usage := <-usageRepo.created:
 				require.Equal(t, "public-model-A", usage.RequestedModel)
+				metadata := <-usageRepo.metadata
+				require.Equal(t, http.MethodPost, *metadata.HTTPMethod)
+				require.Equal(t, http.StatusOK, *metadata.StatusCode)
+				require.Nil(t, metadata.AttemptCount, "mock upstream did not dispatch through the real transport")
 			case <-time.After(2 * time.Second):
 				t.Fatal("queued request usage was not recorded")
 			}
 		})
 	}
+}
+
+type usageMetadataCapturingRepo struct {
+	*openAIWSUsageHandlerUsageLogRepoStub
+	metadata chan requestmeta.Values
+}
+
+func (r *usageMetadataCapturingRepo) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
+	r.metadata <- requestmeta.FromContext(ctx)
+	return r.openAIWSUsageHandlerUsageLogRepoStub.Create(ctx, log)
 }

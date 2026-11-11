@@ -117,13 +117,6 @@ import type { UsageLog } from '@/types'
 import { formatReasoningEffort } from '@/utils/format'
 import { formatUsageOutputRate } from '@/utils/latencyHealth'
 
-type RequestLogRow = UsageLog & {
-  http_method?: string | null
-  method?: string | null
-  status_code?: number | null
-  attempt_count?: number | null
-}
-
 const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
@@ -176,19 +169,18 @@ function keyName(row: UsageLog) { return row.api_key?.name || props.apiKeyNames[
 function groupName(row: UsageLog) { return row.group?.name || (row.group_id != null ? props.groupNames[row.group_id] : '') || '-' }
 function billingLabel(row: UsageLog) { return row.billing_type === 1 || row.subscription_id != null ? t('usage.requestLog.subscription') : t('usage.requestLog.balance') }
 function billingBadgeClass(row: UsageLog) { return row.billing_type === 1 || row.subscription_id != null ? 'subscription-badge' : 'balance-badge' }
-function requestMeta(row: UsageLog) { return row as RequestLogRow }
-function methodLabel(row: UsageLog) { return requestMeta(row).http_method || requestMeta(row).method || '-' }
-function statusLabel(row: UsageLog) { return requestMeta(row).status_code ?? '-' }
+function methodLabel(row: UsageLog) { return row.http_method || t('usage.requestLog.notRecorded') }
+function statusLabel(row: UsageLog) { return row.status_code ?? t('usage.requestLog.notRecorded') }
 function statusBadgeClass(row: UsageLog) {
-  const status = requestMeta(row).status_code
+  const status = row.status_code
   if (status == null) return 'is-unknown'
-  if (status >= 200 && status < 300) return 'is-success'
+  if (status === 101 || (status >= 200 && status < 300)) return 'is-success'
   if (status >= 400 && status < 500) return 'is-warning'
   return 'is-error'
 }
 function attemptLabel(row: UsageLog) {
-  const count = requestMeta(row).attempt_count
-  return count == null ? '-' : t('usage.requestLog.attemptCount', { count })
+  const count = row.attempt_count
+  return count == null ? t('usage.requestLog.notRecorded') : t('usage.requestLog.attemptCount', { count })
 }
 </script>
 

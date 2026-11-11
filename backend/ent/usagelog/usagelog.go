@@ -24,6 +24,12 @@ const (
 	FieldRequestID = "request_id"
 	// FieldModel holds the string denoting the model field in the database.
 	FieldModel = "model"
+	// FieldHTTPMethod holds the string denoting the http_method field in the database.
+	FieldHTTPMethod = "http_method"
+	// FieldStatusCode holds the string denoting the status_code field in the database.
+	FieldStatusCode = "status_code"
+	// FieldAttemptCount holds the string denoting the attempt_count field in the database.
+	FieldAttemptCount = "attempt_count"
 	// FieldRequestedModel holds the string denoting the requested_model field in the database.
 	FieldRequestedModel = "requested_model"
 	// FieldUpstreamModel holds the string denoting the upstream_model field in the database.
@@ -169,6 +175,9 @@ var Columns = []string{
 	FieldAccountID,
 	FieldRequestID,
 	FieldModel,
+	FieldHTTPMethod,
+	FieldStatusCode,
+	FieldAttemptCount,
 	FieldRequestedModel,
 	FieldUpstreamModel,
 	FieldUpstreamResponseModel,
@@ -230,6 +239,8 @@ var (
 	RequestIDValidator func(string) error
 	// ModelValidator is a validator for the "model" field. It is called by the builders before save.
 	ModelValidator func(string) error
+	// HTTPMethodValidator is a validator for the "http_method" field. It is called by the builders before save.
+	HTTPMethodValidator func(string) error
 	// RequestedModelValidator is a validator for the "requested_model" field. It is called by the builders before save.
 	RequestedModelValidator func(string) error
 	// UpstreamModelValidator is a validator for the "upstream_model" field. It is called by the builders before save.
@@ -333,6 +344,21 @@ func ByRequestID(opts ...sql.OrderTermOption) OrderOption {
 // ByModel orders the results by the model field.
 func ByModel(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldModel, opts...).ToFunc()
+}
+
+// ByHTTPMethod orders the results by the http_method field.
+func ByHTTPMethod(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldHTTPMethod, opts...).ToFunc()
+}
+
+// ByStatusCode orders the results by the status_code field.
+func ByStatusCode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStatusCode, opts...).ToFunc()
+}
+
+// ByAttemptCount orders the results by the attempt_count field.
+func ByAttemptCount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAttemptCount, opts...).ToFunc()
 }
 
 // ByRequestedModel orders the results by the requested_model field.

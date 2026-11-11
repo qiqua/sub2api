@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmeta"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -81,12 +82,17 @@ func TestForwardOpenAIWSV2_KeepsOutboundAndObservedServiceTiersSeparate(t *testi
 				`{"model":"gpt-5.5","stream":%t,"service_tier":%q,"input":[{"type":"input_text","text":"hi"}]}`,
 				tc.stream, tc.requestTier,
 			))
-			result, err := svc.Forward(context.Background(), c, account, body)
+			ctx, _ := requestmeta.Begin(context.Background(), http.MethodPost)
+			requestmeta.RecordAttempt(ctx)
+			c.Request = c.Request.WithContext(ctx)
+			result, err := svc.Forward(ctx, c, account, body)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.True(t, result.OpenAIWSMode, "must take HTTP POST → forwardOpenAIWSV2, not HTTP fallback")
 			require.Equal(t, tc.stream, result.Stream)
 			require.Equal(t, "resp_tier_v2", result.RequestID)
+			require.NotNil(t, result.AttemptCount)
+			require.Equal(t, 2, *result.AttemptCount, "WS dispatch includes the earlier account attempt")
 			require.NotNil(t, result.ServiceTier)
 			require.Equal(t, "priority", *result.ServiceTier)
 			require.Equal(t, "default", result.UpstreamResponseServiceTier)

@@ -57,6 +57,48 @@ func (_c *UsageLogCreate) SetModel(v string) *UsageLogCreate {
 	return _c
 }
 
+// SetHTTPMethod sets the "http_method" field.
+func (_c *UsageLogCreate) SetHTTPMethod(v string) *UsageLogCreate {
+	_c.mutation.SetHTTPMethod(v)
+	return _c
+}
+
+// SetNillableHTTPMethod sets the "http_method" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableHTTPMethod(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetHTTPMethod(*v)
+	}
+	return _c
+}
+
+// SetStatusCode sets the "status_code" field.
+func (_c *UsageLogCreate) SetStatusCode(v int) *UsageLogCreate {
+	_c.mutation.SetStatusCode(v)
+	return _c
+}
+
+// SetNillableStatusCode sets the "status_code" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableStatusCode(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetStatusCode(*v)
+	}
+	return _c
+}
+
+// SetAttemptCount sets the "attempt_count" field.
+func (_c *UsageLogCreate) SetAttemptCount(v int) *UsageLogCreate {
+	_c.mutation.SetAttemptCount(v)
+	return _c
+}
+
+// SetNillableAttemptCount sets the "attempt_count" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAttemptCount(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAttemptCount(*v)
+	}
+	return _c
+}
+
 // SetRequestedModel sets the "requested_model" field.
 func (_c *UsageLogCreate) SetRequestedModel(v string) *UsageLogCreate {
 	_c.mutation.SetRequestedModel(v)
@@ -842,6 +884,11 @@ func (_c *UsageLogCreate) check() error {
 			return &ValidationError{Name: "model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.model": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.HTTPMethod(); ok {
+		if err := usagelog.HTTPMethodValidator(v); err != nil {
+			return &ValidationError{Name: "http_method", err: fmt.Errorf(`ent: validator failed for field "UsageLog.http_method": %w`, err)}
+		}
+	}
 	if v, ok := _c.mutation.RequestedModel(); ok {
 		if err := usagelog.RequestedModelValidator(v); err != nil {
 			return &ValidationError{Name: "requested_model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.requested_model": %w`, err)}
@@ -1016,6 +1063,18 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Model(); ok {
 		_spec.SetField(usagelog.FieldModel, field.TypeString, value)
 		_node.Model = value
+	}
+	if value, ok := _c.mutation.HTTPMethod(); ok {
+		_spec.SetField(usagelog.FieldHTTPMethod, field.TypeString, value)
+		_node.HTTPMethod = &value
+	}
+	if value, ok := _c.mutation.StatusCode(); ok {
+		_spec.SetField(usagelog.FieldStatusCode, field.TypeInt, value)
+		_node.StatusCode = &value
+	}
+	if value, ok := _c.mutation.AttemptCount(); ok {
+		_spec.SetField(usagelog.FieldAttemptCount, field.TypeInt, value)
+		_node.AttemptCount = &value
 	}
 	if value, ok := _c.mutation.RequestedModel(); ok {
 		_spec.SetField(usagelog.FieldRequestedModel, field.TypeString, value)
@@ -1379,6 +1438,72 @@ func (u *UsageLogUpsert) SetModel(v string) *UsageLogUpsert {
 // UpdateModel sets the "model" field to the value that was provided on create.
 func (u *UsageLogUpsert) UpdateModel() *UsageLogUpsert {
 	u.SetExcluded(usagelog.FieldModel)
+	return u
+}
+
+// SetHTTPMethod sets the "http_method" field.
+func (u *UsageLogUpsert) SetHTTPMethod(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldHTTPMethod, v)
+	return u
+}
+
+// UpdateHTTPMethod sets the "http_method" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateHTTPMethod() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldHTTPMethod)
+	return u
+}
+
+// ClearHTTPMethod clears the value of the "http_method" field.
+func (u *UsageLogUpsert) ClearHTTPMethod() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldHTTPMethod)
+	return u
+}
+
+// SetStatusCode sets the "status_code" field.
+func (u *UsageLogUpsert) SetStatusCode(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldStatusCode, v)
+	return u
+}
+
+// UpdateStatusCode sets the "status_code" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateStatusCode() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldStatusCode)
+	return u
+}
+
+// AddStatusCode adds v to the "status_code" field.
+func (u *UsageLogUpsert) AddStatusCode(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldStatusCode, v)
+	return u
+}
+
+// ClearStatusCode clears the value of the "status_code" field.
+func (u *UsageLogUpsert) ClearStatusCode() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldStatusCode)
+	return u
+}
+
+// SetAttemptCount sets the "attempt_count" field.
+func (u *UsageLogUpsert) SetAttemptCount(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAttemptCount, v)
+	return u
+}
+
+// UpdateAttemptCount sets the "attempt_count" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAttemptCount() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAttemptCount)
+	return u
+}
+
+// AddAttemptCount adds v to the "attempt_count" field.
+func (u *UsageLogUpsert) AddAttemptCount(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAttemptCount, v)
+	return u
+}
+
+// ClearAttemptCount clears the value of the "attempt_count" field.
+func (u *UsageLogUpsert) ClearAttemptCount() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldAttemptCount)
 	return u
 }
 
@@ -2280,6 +2405,83 @@ func (u *UsageLogUpsertOne) SetModel(v string) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateModel() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateModel()
+	})
+}
+
+// SetHTTPMethod sets the "http_method" field.
+func (u *UsageLogUpsertOne) SetHTTPMethod(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetHTTPMethod(v)
+	})
+}
+
+// UpdateHTTPMethod sets the "http_method" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateHTTPMethod() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateHTTPMethod()
+	})
+}
+
+// ClearHTTPMethod clears the value of the "http_method" field.
+func (u *UsageLogUpsertOne) ClearHTTPMethod() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearHTTPMethod()
+	})
+}
+
+// SetStatusCode sets the "status_code" field.
+func (u *UsageLogUpsertOne) SetStatusCode(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetStatusCode(v)
+	})
+}
+
+// AddStatusCode adds v to the "status_code" field.
+func (u *UsageLogUpsertOne) AddStatusCode(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddStatusCode(v)
+	})
+}
+
+// UpdateStatusCode sets the "status_code" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateStatusCode() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateStatusCode()
+	})
+}
+
+// ClearStatusCode clears the value of the "status_code" field.
+func (u *UsageLogUpsertOne) ClearStatusCode() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearStatusCode()
+	})
+}
+
+// SetAttemptCount sets the "attempt_count" field.
+func (u *UsageLogUpsertOne) SetAttemptCount(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAttemptCount(v)
+	})
+}
+
+// AddAttemptCount adds v to the "attempt_count" field.
+func (u *UsageLogUpsertOne) AddAttemptCount(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAttemptCount(v)
+	})
+}
+
+// UpdateAttemptCount sets the "attempt_count" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAttemptCount() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAttemptCount()
+	})
+}
+
+// ClearAttemptCount clears the value of the "attempt_count" field.
+func (u *UsageLogUpsertOne) ClearAttemptCount() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearAttemptCount()
 	})
 }
 
@@ -3478,6 +3680,83 @@ func (u *UsageLogUpsertBulk) SetModel(v string) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateModel() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateModel()
+	})
+}
+
+// SetHTTPMethod sets the "http_method" field.
+func (u *UsageLogUpsertBulk) SetHTTPMethod(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetHTTPMethod(v)
+	})
+}
+
+// UpdateHTTPMethod sets the "http_method" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateHTTPMethod() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateHTTPMethod()
+	})
+}
+
+// ClearHTTPMethod clears the value of the "http_method" field.
+func (u *UsageLogUpsertBulk) ClearHTTPMethod() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearHTTPMethod()
+	})
+}
+
+// SetStatusCode sets the "status_code" field.
+func (u *UsageLogUpsertBulk) SetStatusCode(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetStatusCode(v)
+	})
+}
+
+// AddStatusCode adds v to the "status_code" field.
+func (u *UsageLogUpsertBulk) AddStatusCode(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddStatusCode(v)
+	})
+}
+
+// UpdateStatusCode sets the "status_code" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateStatusCode() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateStatusCode()
+	})
+}
+
+// ClearStatusCode clears the value of the "status_code" field.
+func (u *UsageLogUpsertBulk) ClearStatusCode() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearStatusCode()
+	})
+}
+
+// SetAttemptCount sets the "attempt_count" field.
+func (u *UsageLogUpsertBulk) SetAttemptCount(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAttemptCount(v)
+	})
+}
+
+// AddAttemptCount adds v to the "attempt_count" field.
+func (u *UsageLogUpsertBulk) AddAttemptCount(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAttemptCount(v)
+	})
+}
+
+// UpdateAttemptCount sets the "attempt_count" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAttemptCount() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAttemptCount()
+	})
+}
+
+// ClearAttemptCount clears the value of the "attempt_count" field.
+func (u *UsageLogUpsertBulk) ClearAttemptCount() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearAttemptCount()
 	})
 }
 

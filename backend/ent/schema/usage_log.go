@@ -41,6 +41,9 @@ func (UsageLog) Fields() []ent.Field {
 		field.String("model").
 			MaxLen(100).
 			NotEmpty(),
+		field.String("http_method").MaxLen(16).Optional().Nillable(),
+		field.Int("status_code").Optional().Nillable(),
+		field.Int("attempt_count").Optional().Nillable(),
 		// RequestedModel stores the client-requested model name for stable display and analytics.
 		// NULL means historical rows written before requested_model dual-write was introduced.
 		field.String("requested_model").

@@ -102,12 +102,15 @@ func ApplyLegacyRequestFields(requestType RequestType, fallbackStream bool, fall
 }
 
 type UsageLog struct {
-	ID        int64
-	UserID    int64
-	APIKeyID  int64
-	AccountID int64
-	RequestID string
-	Model     string
+	ID           int64
+	UserID       int64
+	APIKeyID     int64
+	AccountID    int64
+	RequestID    string
+	Model        string
+	HTTPMethod   *string
+	StatusCode   *int
+	AttemptCount *int
 	// RequestedModel is the client-requested model name recorded for stable user/admin display.
 	// Empty should be treated as Model for backward compatibility with historical rows.
 	RequestedModel string

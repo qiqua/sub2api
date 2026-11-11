@@ -20,6 +20,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmeta"
 	middleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -271,15 +272,28 @@ func (r *cachedBillingUserRepo) DeductBalance(context.Context, int64, float64) e
 
 type cachedBillingUsageRepo struct {
 	service.UsageLogRepository
-	mu   sync.Mutex
-	logs []*service.UsageLog
+	mu       sync.Mutex
+	logs     []*service.UsageLog
+	metadata []requestmeta.Values
 }
 
-func (r *cachedBillingUsageRepo) Create(_ context.Context, log *service.UsageLog) (bool, error) {
+func (r *cachedBillingUsageRepo) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.logs = append(r.logs, log)
+	r.metadata = append(r.metadata, requestmeta.FromContext(ctx))
 	return true, nil
+}
+
+func (r *cachedBillingUsageRepo) requireMetadata(t *testing.T, method string, status int) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	require.Len(t, r.metadata, 1)
+	require.NotNil(t, r.metadata[0].HTTPMethod)
+	require.Equal(t, method, *r.metadata[0].HTTPMethod)
+	require.NotNil(t, r.metadata[0].StatusCode, "billing must snapshot the committed response status")
+	require.Equal(t, status, *r.metadata[0].StatusCode)
 }
 
 func (r *cachedBillingUsageRepo) first() *service.UsageLog {
@@ -342,9 +356,9 @@ func newCachedBillingEnv(t *testing.T, balance float64, accountIDs ...int64) *ca
 	bcs := service.NewBillingCacheService(nil, userRepo, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(bcs.Stop)
 	snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: scheduled}, nil, nil, nil, nil)
-	gw := service.NewGatewayService(nil, &fakeGroupRepo{group: group}, usage, nil, userRepo, nil, nil, nil, cfg, snapshot, nil,
-		billing, nil, &service.BillingCacheService{}, nil, nil, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	upstream := &cachedBillingUpstream{}
+	gw := service.NewGatewayService(nil, &fakeGroupRepo{group: group}, usage, nil, userRepo, nil, nil, nil, cfg, snapshot, nil,
+		billing, nil, &service.BillingCacheService{}, nil, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	compat := service.NewGeminiMessagesCompatService(&cachedBillingAccountRepo{accounts: accounts}, nil, nil, nil, nil, nil, upstream, nil, cfg)
 	repo := &cachedBillingRepo{records: map[string]*service.GeminiCachedContent{}, mutations: map[int64]cachedBillingMutation{}}
 	h := &GatewayHandler{
@@ -385,6 +399,7 @@ func (e *cachedBillingEnv) serve(method, target, body string, params gin.Params,
 	c.Params = params
 	c.Set(string(middleware.ContextKeyAPIKey), e.apiKey)
 	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: e.apiKey.UserID, Concurrency: 10})
+	installUsageRequestMetadata(c)
 	call(c)
 	return rec
 }
@@ -434,6 +449,7 @@ func TestGeminiCachedContentsPatch_UsesChannelUsageRecordedAtCreate(t *testing.T
 	require.NotNil(t, usageLog.ChannelID)
 	require.Equal(t, int64(5), *usageLog.ChannelID)
 	require.True(t, strings.HasPrefix(usageLog.RequestID, "gcache:patch:abc:"), usageLog.RequestID)
+	env.usage.requireMetadata(t, http.MethodPatch, rec.Code)
 }
 
 func cachedBillingCreateBody(expire time.Time) string {
@@ -455,6 +471,7 @@ func TestGeminiCachedContentsCreate_ChargesInputAndStorage(t *testing.T) {
 		require.False(t, record.ExpireTime.After(time.Now().Add(24*time.Hour)), "本地到期时间不超过请求的有效期")
 		require.Equal(t, "gcache:create:"+record.PublicID, env.usage.first().RequestID, "费用行按缓存 ID 可检索")
 	}
+	env.usage.requireMetadata(t, http.MethodPost, rec.Code)
 }
 
 func TestGeminiCachedContentsCreate_UnaffordableStorageDeletesUpstreamAndBillsInputOnly(t *testing.T) {
@@ -469,6 +486,7 @@ func TestGeminiCachedContentsCreate_UnaffordableStorageDeletesUpstreamAndBillsIn
 	totals := env.waitForUsage(t, 1)
 	require.Len(t, totals, 1)
 	require.InDelta(t, cachedBillingTokens*cachedBillingInputPrice, totals[0], 1e-9, "只收已发生的缓存 token 输入费")
+	env.usage.requireMetadata(t, http.MethodPost, rec.Code)
 }
 
 func TestGeminiCachedContentsCreate_UnusableUpstreamResponseCleansUpWithoutRetry(t *testing.T) {

@@ -102,6 +102,80 @@ func (_u *UsageLogUpdate) SetNillableModel(v *string) *UsageLogUpdate {
 	return _u
 }
 
+// SetHTTPMethod sets the "http_method" field.
+func (_u *UsageLogUpdate) SetHTTPMethod(v string) *UsageLogUpdate {
+	_u.mutation.SetHTTPMethod(v)
+	return _u
+}
+
+// SetNillableHTTPMethod sets the "http_method" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableHTTPMethod(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetHTTPMethod(*v)
+	}
+	return _u
+}
+
+// ClearHTTPMethod clears the value of the "http_method" field.
+func (_u *UsageLogUpdate) ClearHTTPMethod() *UsageLogUpdate {
+	_u.mutation.ClearHTTPMethod()
+	return _u
+}
+
+// SetStatusCode sets the "status_code" field.
+func (_u *UsageLogUpdate) SetStatusCode(v int) *UsageLogUpdate {
+	_u.mutation.ResetStatusCode()
+	_u.mutation.SetStatusCode(v)
+	return _u
+}
+
+// SetNillableStatusCode sets the "status_code" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableStatusCode(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetStatusCode(*v)
+	}
+	return _u
+}
+
+// AddStatusCode adds value to the "status_code" field.
+func (_u *UsageLogUpdate) AddStatusCode(v int) *UsageLogUpdate {
+	_u.mutation.AddStatusCode(v)
+	return _u
+}
+
+// ClearStatusCode clears the value of the "status_code" field.
+func (_u *UsageLogUpdate) ClearStatusCode() *UsageLogUpdate {
+	_u.mutation.ClearStatusCode()
+	return _u
+}
+
+// SetAttemptCount sets the "attempt_count" field.
+func (_u *UsageLogUpdate) SetAttemptCount(v int) *UsageLogUpdate {
+	_u.mutation.ResetAttemptCount()
+	_u.mutation.SetAttemptCount(v)
+	return _u
+}
+
+// SetNillableAttemptCount sets the "attempt_count" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAttemptCount(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAttemptCount(*v)
+	}
+	return _u
+}
+
+// AddAttemptCount adds value to the "attempt_count" field.
+func (_u *UsageLogUpdate) AddAttemptCount(v int) *UsageLogUpdate {
+	_u.mutation.AddAttemptCount(v)
+	return _u
+}
+
+// ClearAttemptCount clears the value of the "attempt_count" field.
+func (_u *UsageLogUpdate) ClearAttemptCount() *UsageLogUpdate {
+	_u.mutation.ClearAttemptCount()
+	return _u
+}
+
 // SetRequestedModel sets the "requested_model" field.
 func (_u *UsageLogUpdate) SetRequestedModel(v string) *UsageLogUpdate {
 	_u.mutation.SetRequestedModel(v)
@@ -1088,6 +1162,11 @@ func (_u *UsageLogUpdate) check() error {
 			return &ValidationError{Name: "model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.model": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.HTTPMethod(); ok {
+		if err := usagelog.HTTPMethodValidator(v); err != nil {
+			return &ValidationError{Name: "http_method", err: fmt.Errorf(`ent: validator failed for field "UsageLog.http_method": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.RequestedModel(); ok {
 		if err := usagelog.RequestedModelValidator(v); err != nil {
 			return &ValidationError{Name: "requested_model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.requested_model": %w`, err)}
@@ -1182,6 +1261,30 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Model(); ok {
 		_spec.SetField(usagelog.FieldModel, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.HTTPMethod(); ok {
+		_spec.SetField(usagelog.FieldHTTPMethod, field.TypeString, value)
+	}
+	if _u.mutation.HTTPMethodCleared() {
+		_spec.ClearField(usagelog.FieldHTTPMethod, field.TypeString)
+	}
+	if value, ok := _u.mutation.StatusCode(); ok {
+		_spec.SetField(usagelog.FieldStatusCode, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedStatusCode(); ok {
+		_spec.AddField(usagelog.FieldStatusCode, field.TypeInt, value)
+	}
+	if _u.mutation.StatusCodeCleared() {
+		_spec.ClearField(usagelog.FieldStatusCode, field.TypeInt)
+	}
+	if value, ok := _u.mutation.AttemptCount(); ok {
+		_spec.SetField(usagelog.FieldAttemptCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAttemptCount(); ok {
+		_spec.AddField(usagelog.FieldAttemptCount, field.TypeInt, value)
+	}
+	if _u.mutation.AttemptCountCleared() {
+		_spec.ClearField(usagelog.FieldAttemptCount, field.TypeInt)
 	}
 	if value, ok := _u.mutation.RequestedModel(); ok {
 		_spec.SetField(usagelog.FieldRequestedModel, field.TypeString, value)
@@ -1667,6 +1770,80 @@ func (_u *UsageLogUpdateOne) SetNillableModel(v *string) *UsageLogUpdateOne {
 	if v != nil {
 		_u.SetModel(*v)
 	}
+	return _u
+}
+
+// SetHTTPMethod sets the "http_method" field.
+func (_u *UsageLogUpdateOne) SetHTTPMethod(v string) *UsageLogUpdateOne {
+	_u.mutation.SetHTTPMethod(v)
+	return _u
+}
+
+// SetNillableHTTPMethod sets the "http_method" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableHTTPMethod(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetHTTPMethod(*v)
+	}
+	return _u
+}
+
+// ClearHTTPMethod clears the value of the "http_method" field.
+func (_u *UsageLogUpdateOne) ClearHTTPMethod() *UsageLogUpdateOne {
+	_u.mutation.ClearHTTPMethod()
+	return _u
+}
+
+// SetStatusCode sets the "status_code" field.
+func (_u *UsageLogUpdateOne) SetStatusCode(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetStatusCode()
+	_u.mutation.SetStatusCode(v)
+	return _u
+}
+
+// SetNillableStatusCode sets the "status_code" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableStatusCode(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetStatusCode(*v)
+	}
+	return _u
+}
+
+// AddStatusCode adds value to the "status_code" field.
+func (_u *UsageLogUpdateOne) AddStatusCode(v int) *UsageLogUpdateOne {
+	_u.mutation.AddStatusCode(v)
+	return _u
+}
+
+// ClearStatusCode clears the value of the "status_code" field.
+func (_u *UsageLogUpdateOne) ClearStatusCode() *UsageLogUpdateOne {
+	_u.mutation.ClearStatusCode()
+	return _u
+}
+
+// SetAttemptCount sets the "attempt_count" field.
+func (_u *UsageLogUpdateOne) SetAttemptCount(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAttemptCount()
+	_u.mutation.SetAttemptCount(v)
+	return _u
+}
+
+// SetNillableAttemptCount sets the "attempt_count" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAttemptCount(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAttemptCount(*v)
+	}
+	return _u
+}
+
+// AddAttemptCount adds value to the "attempt_count" field.
+func (_u *UsageLogUpdateOne) AddAttemptCount(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAttemptCount(v)
+	return _u
+}
+
+// ClearAttemptCount clears the value of the "attempt_count" field.
+func (_u *UsageLogUpdateOne) ClearAttemptCount() *UsageLogUpdateOne {
+	_u.mutation.ClearAttemptCount()
 	return _u
 }
 
@@ -2669,6 +2846,11 @@ func (_u *UsageLogUpdateOne) check() error {
 			return &ValidationError{Name: "model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.model": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.HTTPMethod(); ok {
+		if err := usagelog.HTTPMethodValidator(v); err != nil {
+			return &ValidationError{Name: "http_method", err: fmt.Errorf(`ent: validator failed for field "UsageLog.http_method": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.RequestedModel(); ok {
 		if err := usagelog.RequestedModelValidator(v); err != nil {
 			return &ValidationError{Name: "requested_model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.requested_model": %w`, err)}
@@ -2780,6 +2962,30 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.Model(); ok {
 		_spec.SetField(usagelog.FieldModel, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.HTTPMethod(); ok {
+		_spec.SetField(usagelog.FieldHTTPMethod, field.TypeString, value)
+	}
+	if _u.mutation.HTTPMethodCleared() {
+		_spec.ClearField(usagelog.FieldHTTPMethod, field.TypeString)
+	}
+	if value, ok := _u.mutation.StatusCode(); ok {
+		_spec.SetField(usagelog.FieldStatusCode, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedStatusCode(); ok {
+		_spec.AddField(usagelog.FieldStatusCode, field.TypeInt, value)
+	}
+	if _u.mutation.StatusCodeCleared() {
+		_spec.ClearField(usagelog.FieldStatusCode, field.TypeInt)
+	}
+	if value, ok := _u.mutation.AttemptCount(); ok {
+		_spec.SetField(usagelog.FieldAttemptCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAttemptCount(); ok {
+		_spec.AddField(usagelog.FieldAttemptCount, field.TypeInt, value)
+	}
+	if _u.mutation.AttemptCountCleared() {
+		_spec.ClearField(usagelog.FieldAttemptCount, field.TypeInt)
 	}
 	if value, ok := _u.mutation.RequestedModel(); ok {
 		_spec.SetField(usagelog.FieldRequestedModel, field.TypeString, value)

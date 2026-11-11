@@ -80,6 +80,21 @@ func Model(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldModel, v))
 }
 
+// HTTPMethod applies equality check predicate on the "http_method" field. It's identical to HTTPMethodEQ.
+func HTTPMethod(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldHTTPMethod, v))
+}
+
+// StatusCode applies equality check predicate on the "status_code" field. It's identical to StatusCodeEQ.
+func StatusCode(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldStatusCode, v))
+}
+
+// AttemptCount applies equality check predicate on the "attempt_count" field. It's identical to AttemptCountEQ.
+func AttemptCount(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAttemptCount, v))
+}
+
 // RequestedModel applies equality check predicate on the "requested_model" field. It's identical to RequestedModelEQ.
 func RequestedModel(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldRequestedModel, v))
@@ -483,6 +498,181 @@ func ModelEqualFold(v string) predicate.UsageLog {
 // ModelContainsFold applies the ContainsFold predicate on the "model" field.
 func ModelContainsFold(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldContainsFold(FieldModel, v))
+}
+
+// HTTPMethodEQ applies the EQ predicate on the "http_method" field.
+func HTTPMethodEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldHTTPMethod, v))
+}
+
+// HTTPMethodNEQ applies the NEQ predicate on the "http_method" field.
+func HTTPMethodNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldHTTPMethod, v))
+}
+
+// HTTPMethodIn applies the In predicate on the "http_method" field.
+func HTTPMethodIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldHTTPMethod, vs...))
+}
+
+// HTTPMethodNotIn applies the NotIn predicate on the "http_method" field.
+func HTTPMethodNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldHTTPMethod, vs...))
+}
+
+// HTTPMethodGT applies the GT predicate on the "http_method" field.
+func HTTPMethodGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldHTTPMethod, v))
+}
+
+// HTTPMethodGTE applies the GTE predicate on the "http_method" field.
+func HTTPMethodGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldHTTPMethod, v))
+}
+
+// HTTPMethodLT applies the LT predicate on the "http_method" field.
+func HTTPMethodLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldHTTPMethod, v))
+}
+
+// HTTPMethodLTE applies the LTE predicate on the "http_method" field.
+func HTTPMethodLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldHTTPMethod, v))
+}
+
+// HTTPMethodContains applies the Contains predicate on the "http_method" field.
+func HTTPMethodContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldHTTPMethod, v))
+}
+
+// HTTPMethodHasPrefix applies the HasPrefix predicate on the "http_method" field.
+func HTTPMethodHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldHTTPMethod, v))
+}
+
+// HTTPMethodHasSuffix applies the HasSuffix predicate on the "http_method" field.
+func HTTPMethodHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldHTTPMethod, v))
+}
+
+// HTTPMethodIsNil applies the IsNil predicate on the "http_method" field.
+func HTTPMethodIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldHTTPMethod))
+}
+
+// HTTPMethodNotNil applies the NotNil predicate on the "http_method" field.
+func HTTPMethodNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldHTTPMethod))
+}
+
+// HTTPMethodEqualFold applies the EqualFold predicate on the "http_method" field.
+func HTTPMethodEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldHTTPMethod, v))
+}
+
+// HTTPMethodContainsFold applies the ContainsFold predicate on the "http_method" field.
+func HTTPMethodContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldHTTPMethod, v))
+}
+
+// StatusCodeEQ applies the EQ predicate on the "status_code" field.
+func StatusCodeEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldStatusCode, v))
+}
+
+// StatusCodeNEQ applies the NEQ predicate on the "status_code" field.
+func StatusCodeNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldStatusCode, v))
+}
+
+// StatusCodeIn applies the In predicate on the "status_code" field.
+func StatusCodeIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldStatusCode, vs...))
+}
+
+// StatusCodeNotIn applies the NotIn predicate on the "status_code" field.
+func StatusCodeNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldStatusCode, vs...))
+}
+
+// StatusCodeGT applies the GT predicate on the "status_code" field.
+func StatusCodeGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldStatusCode, v))
+}
+
+// StatusCodeGTE applies the GTE predicate on the "status_code" field.
+func StatusCodeGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldStatusCode, v))
+}
+
+// StatusCodeLT applies the LT predicate on the "status_code" field.
+func StatusCodeLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldStatusCode, v))
+}
+
+// StatusCodeLTE applies the LTE predicate on the "status_code" field.
+func StatusCodeLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldStatusCode, v))
+}
+
+// StatusCodeIsNil applies the IsNil predicate on the "status_code" field.
+func StatusCodeIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldStatusCode))
+}
+
+// StatusCodeNotNil applies the NotNil predicate on the "status_code" field.
+func StatusCodeNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldStatusCode))
+}
+
+// AttemptCountEQ applies the EQ predicate on the "attempt_count" field.
+func AttemptCountEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAttemptCount, v))
+}
+
+// AttemptCountNEQ applies the NEQ predicate on the "attempt_count" field.
+func AttemptCountNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAttemptCount, v))
+}
+
+// AttemptCountIn applies the In predicate on the "attempt_count" field.
+func AttemptCountIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAttemptCount, vs...))
+}
+
+// AttemptCountNotIn applies the NotIn predicate on the "attempt_count" field.
+func AttemptCountNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAttemptCount, vs...))
+}
+
+// AttemptCountGT applies the GT predicate on the "attempt_count" field.
+func AttemptCountGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAttemptCount, v))
+}
+
+// AttemptCountGTE applies the GTE predicate on the "attempt_count" field.
+func AttemptCountGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAttemptCount, v))
+}
+
+// AttemptCountLT applies the LT predicate on the "attempt_count" field.
+func AttemptCountLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAttemptCount, v))
+}
+
+// AttemptCountLTE applies the LTE predicate on the "attempt_count" field.
+func AttemptCountLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAttemptCount, v))
+}
+
+// AttemptCountIsNil applies the IsNil predicate on the "attempt_count" field.
+func AttemptCountIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldAttemptCount))
+}
+
+// AttemptCountNotNil applies the NotNil predicate on the "attempt_count" field.
+func AttemptCountNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldAttemptCount))
 }
 
 // RequestedModelEQ applies the EQ predicate on the "requested_model" field.

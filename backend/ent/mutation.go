@@ -44871,6 +44871,11 @@ type UsageLogMutation struct {
 	id                           *int64
 	request_id                   *string
 	model                        *string
+	http_method                  *string
+	status_code                  *int
+	addstatus_code               *int
+	attempt_count                *int
+	addattempt_count             *int
 	requested_model              *string
 	upstream_model               *string
 	upstream_response_model      *string
@@ -45228,6 +45233,195 @@ func (m *UsageLogMutation) OldModel(ctx context.Context) (v string, err error) {
 // ResetModel resets all changes to the "model" field.
 func (m *UsageLogMutation) ResetModel() {
 	m.model = nil
+}
+
+// SetHTTPMethod sets the "http_method" field.
+func (m *UsageLogMutation) SetHTTPMethod(s string) {
+	m.http_method = &s
+}
+
+// HTTPMethod returns the value of the "http_method" field in the mutation.
+func (m *UsageLogMutation) HTTPMethod() (r string, exists bool) {
+	v := m.http_method
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHTTPMethod returns the old "http_method" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldHTTPMethod(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHTTPMethod is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHTTPMethod requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHTTPMethod: %w", err)
+	}
+	return oldValue.HTTPMethod, nil
+}
+
+// ClearHTTPMethod clears the value of the "http_method" field.
+func (m *UsageLogMutation) ClearHTTPMethod() {
+	m.http_method = nil
+	m.clearedFields[usagelog.FieldHTTPMethod] = struct{}{}
+}
+
+// HTTPMethodCleared returns if the "http_method" field was cleared in this mutation.
+func (m *UsageLogMutation) HTTPMethodCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldHTTPMethod]
+	return ok
+}
+
+// ResetHTTPMethod resets all changes to the "http_method" field.
+func (m *UsageLogMutation) ResetHTTPMethod() {
+	m.http_method = nil
+	delete(m.clearedFields, usagelog.FieldHTTPMethod)
+}
+
+// SetStatusCode sets the "status_code" field.
+func (m *UsageLogMutation) SetStatusCode(i int) {
+	m.status_code = &i
+	m.addstatus_code = nil
+}
+
+// StatusCode returns the value of the "status_code" field in the mutation.
+func (m *UsageLogMutation) StatusCode() (r int, exists bool) {
+	v := m.status_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatusCode returns the old "status_code" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldStatusCode(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatusCode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatusCode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatusCode: %w", err)
+	}
+	return oldValue.StatusCode, nil
+}
+
+// AddStatusCode adds i to the "status_code" field.
+func (m *UsageLogMutation) AddStatusCode(i int) {
+	if m.addstatus_code != nil {
+		*m.addstatus_code += i
+	} else {
+		m.addstatus_code = &i
+	}
+}
+
+// AddedStatusCode returns the value that was added to the "status_code" field in this mutation.
+func (m *UsageLogMutation) AddedStatusCode() (r int, exists bool) {
+	v := m.addstatus_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearStatusCode clears the value of the "status_code" field.
+func (m *UsageLogMutation) ClearStatusCode() {
+	m.status_code = nil
+	m.addstatus_code = nil
+	m.clearedFields[usagelog.FieldStatusCode] = struct{}{}
+}
+
+// StatusCodeCleared returns if the "status_code" field was cleared in this mutation.
+func (m *UsageLogMutation) StatusCodeCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldStatusCode]
+	return ok
+}
+
+// ResetStatusCode resets all changes to the "status_code" field.
+func (m *UsageLogMutation) ResetStatusCode() {
+	m.status_code = nil
+	m.addstatus_code = nil
+	delete(m.clearedFields, usagelog.FieldStatusCode)
+}
+
+// SetAttemptCount sets the "attempt_count" field.
+func (m *UsageLogMutation) SetAttemptCount(i int) {
+	m.attempt_count = &i
+	m.addattempt_count = nil
+}
+
+// AttemptCount returns the value of the "attempt_count" field in the mutation.
+func (m *UsageLogMutation) AttemptCount() (r int, exists bool) {
+	v := m.attempt_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAttemptCount returns the old "attempt_count" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAttemptCount(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAttemptCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAttemptCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAttemptCount: %w", err)
+	}
+	return oldValue.AttemptCount, nil
+}
+
+// AddAttemptCount adds i to the "attempt_count" field.
+func (m *UsageLogMutation) AddAttemptCount(i int) {
+	if m.addattempt_count != nil {
+		*m.addattempt_count += i
+	} else {
+		m.addattempt_count = &i
+	}
+}
+
+// AddedAttemptCount returns the value that was added to the "attempt_count" field in this mutation.
+func (m *UsageLogMutation) AddedAttemptCount() (r int, exists bool) {
+	v := m.addattempt_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAttemptCount clears the value of the "attempt_count" field.
+func (m *UsageLogMutation) ClearAttemptCount() {
+	m.attempt_count = nil
+	m.addattempt_count = nil
+	m.clearedFields[usagelog.FieldAttemptCount] = struct{}{}
+}
+
+// AttemptCountCleared returns if the "attempt_count" field was cleared in this mutation.
+func (m *UsageLogMutation) AttemptCountCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldAttemptCount]
+	return ok
+}
+
+// ResetAttemptCount resets all changes to the "attempt_count" field.
+func (m *UsageLogMutation) ResetAttemptCount() {
+	m.attempt_count = nil
+	m.addattempt_count = nil
+	delete(m.clearedFields, usagelog.FieldAttemptCount)
 }
 
 // SetRequestedModel sets the "requested_model" field.
@@ -47734,7 +47928,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 49)
+	fields := make([]string, 0, 52)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47749,6 +47943,15 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.model != nil {
 		fields = append(fields, usagelog.FieldModel)
+	}
+	if m.http_method != nil {
+		fields = append(fields, usagelog.FieldHTTPMethod)
+	}
+	if m.status_code != nil {
+		fields = append(fields, usagelog.FieldStatusCode)
+	}
+	if m.attempt_count != nil {
+		fields = append(fields, usagelog.FieldAttemptCount)
 	}
 	if m.requested_model != nil {
 		fields = append(fields, usagelog.FieldRequestedModel)
@@ -47900,6 +48103,12 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.RequestID()
 	case usagelog.FieldModel:
 		return m.Model()
+	case usagelog.FieldHTTPMethod:
+		return m.HTTPMethod()
+	case usagelog.FieldStatusCode:
+		return m.StatusCode()
+	case usagelog.FieldAttemptCount:
+		return m.AttemptCount()
 	case usagelog.FieldRequestedModel:
 		return m.RequestedModel()
 	case usagelog.FieldUpstreamModel:
@@ -48007,6 +48216,12 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldRequestID(ctx)
 	case usagelog.FieldModel:
 		return m.OldModel(ctx)
+	case usagelog.FieldHTTPMethod:
+		return m.OldHTTPMethod(ctx)
+	case usagelog.FieldStatusCode:
+		return m.OldStatusCode(ctx)
+	case usagelog.FieldAttemptCount:
+		return m.OldAttemptCount(ctx)
 	case usagelog.FieldRequestedModel:
 		return m.OldRequestedModel(ctx)
 	case usagelog.FieldUpstreamModel:
@@ -48138,6 +48353,27 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetModel(v)
+		return nil
+	case usagelog.FieldHTTPMethod:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHTTPMethod(v)
+		return nil
+	case usagelog.FieldStatusCode:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatusCode(v)
+		return nil
+	case usagelog.FieldAttemptCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAttemptCount(v)
 		return nil
 	case usagelog.FieldRequestedModel:
 		v, ok := value.(string)
@@ -48455,6 +48691,12 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *UsageLogMutation) AddedFields() []string {
 	var fields []string
+	if m.addstatus_code != nil {
+		fields = append(fields, usagelog.FieldStatusCode)
+	}
+	if m.addattempt_count != nil {
+		fields = append(fields, usagelog.FieldAttemptCount)
+	}
 	if m.addchannel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
@@ -48532,6 +48774,10 @@ func (m *UsageLogMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case usagelog.FieldStatusCode:
+		return m.AddedStatusCode()
+	case usagelog.FieldAttemptCount:
+		return m.AddedAttemptCount()
 	case usagelog.FieldChannelID:
 		return m.AddedChannelID()
 	case usagelog.FieldInputTokens:
@@ -48587,6 +48833,20 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case usagelog.FieldStatusCode:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddStatusCode(v)
+		return nil
+	case usagelog.FieldAttemptCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAttemptCount(v)
+		return nil
 	case usagelog.FieldChannelID:
 		v, ok := value.(int64)
 		if !ok {
@@ -48756,6 +49016,15 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *UsageLogMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(usagelog.FieldHTTPMethod) {
+		fields = append(fields, usagelog.FieldHTTPMethod)
+	}
+	if m.FieldCleared(usagelog.FieldStatusCode) {
+		fields = append(fields, usagelog.FieldStatusCode)
+	}
+	if m.FieldCleared(usagelog.FieldAttemptCount) {
+		fields = append(fields, usagelog.FieldAttemptCount)
+	}
 	if m.FieldCleared(usagelog.FieldRequestedModel) {
 		fields = append(fields, usagelog.FieldRequestedModel)
 	}
@@ -48836,6 +49105,15 @@ func (m *UsageLogMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *UsageLogMutation) ClearField(name string) error {
 	switch name {
+	case usagelog.FieldHTTPMethod:
+		m.ClearHTTPMethod()
+		return nil
+	case usagelog.FieldStatusCode:
+		m.ClearStatusCode()
+		return nil
+	case usagelog.FieldAttemptCount:
+		m.ClearAttemptCount()
+		return nil
 	case usagelog.FieldRequestedModel:
 		m.ClearRequestedModel()
 		return nil
@@ -48924,6 +49202,15 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldModel:
 		m.ResetModel()
+		return nil
+	case usagelog.FieldHTTPMethod:
+		m.ResetHTTPMethod()
+		return nil
+	case usagelog.FieldStatusCode:
+		m.ResetStatusCode()
+		return nil
+	case usagelog.FieldAttemptCount:
+		m.ResetAttemptCount()
 		return nil
 	case usagelog.FieldRequestedModel:
 		m.ResetRequestedModel()
