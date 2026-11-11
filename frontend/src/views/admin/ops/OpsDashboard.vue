@@ -1,6 +1,6 @@
 <template>
   <component :is="isFullscreen ? 'div' : AppLayout" :class="isFullscreen ? 'flex h-[100dvh] overflow-hidden bg-gray-50 dark:bg-dark-950' : ''">
-    <div :class="[isFullscreen ? 'h-full p-4 md:p-6' : 'app-page-fixed', 'flex min-h-0 flex-col gap-6']">
+    <div class="app-page-scroll w-full space-y-6" :class="{ 'p-4 md:p-6': isFullscreen }">
       <div
         v-if="errorMessage"
         class="rounded-2xl bg-red-50 p-4 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400"
@@ -12,7 +12,6 @@
 
       <OpsDashboardHeader
         v-else-if="opsEnabled"
-        class="shrink-0"
         :overview="overview"
         :platform="platform"
         :group-id="groupId"
@@ -42,7 +41,7 @@
 
       <div
         v-if="opsEnabled && !(loading && !hasLoadedOnce)"
-        class="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain pb-12 pr-1"
+        class="space-y-6 pb-12 pr-1"
       >
         <!-- Row: Concurrency + Throughput -->
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-4">
