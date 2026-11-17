@@ -116,9 +116,10 @@ func TestOpenAINativeMetadataOnlyEOFIsStreamFailureNotFirstEventTimeout(t *testi
 	_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "test-model", "test-model")
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.False(t, failoverErr.SafeToFailoverAfterWrite)
-	require.JSONEq(t, `{"error":{"type":"upstream_error","message":"OpenAI stream ended before a terminal event"}}`, string(failoverErr.ResponseBody))
-	require.Empty(t, recorder.Body.String())
+	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	// Only the upstream keepalive event reaches the client; it is not output.
+	require.Equal(t, "data: {\"type\":\"keepalive\"}\n\n", recorder.Body.String())
+	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
 	select {
 	case <-writerDone:
 	case <-time.After(time.Second):
