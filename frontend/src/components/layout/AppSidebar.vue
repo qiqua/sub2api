@@ -2,7 +2,7 @@
   <aside
     class="sidebar"
     :class="[
-      sidebarCollapsed ? 'w-[72px]' : 'w-56',
+      sidebarCollapsed ? 'lg:w-[72px]' : '',
       { '-translate-x-full lg:translate-x-0': !mobileOpen }
     ]"
   >
@@ -30,7 +30,7 @@
     </div>
 
     <!-- Navigation -->
-    <nav ref="sidebarNavRef" class="sidebar-nav scrollbar-hide">
+    <nav ref="sidebarNavRef" class="sidebar-nav scrollbar-hide min-h-0">
       <!-- Admin View: Admin menu first, then personal menu -->
       <template v-if="isAdmin">
         <!-- Admin Section -->
@@ -148,7 +148,7 @@
     </nav>
 
     <!-- Bottom Section -->
-    <div class="mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
+    <div class="mt-auto shrink-0 border-t border-gray-100 p-3 dark:border-dark-800">
       <!-- Theme Toggle -->
       <button
         @click="toggleTheme"
@@ -166,13 +166,14 @@
       <!-- Collapse Button -->
       <button
         @click="toggleSidebar"
-        class="sidebar-link w-full"
+        type="button"
+        class="sidebar-link hidden w-full lg:flex"
         :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
         :title="sidebarCollapsed ? t('nav.expand') : t('nav.collapse')"
       >
         <ChevronDoubleLeftIcon v-if="!sidebarCollapsed" class="h-5 w-5 flex-shrink-0" />
         <ChevronDoubleRightIcon v-else class="h-5 w-5 flex-shrink-0" />
-        <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t('nav.collapse') }}</span>
+        <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ sidebarCollapsed ? t('nav.expand') : t('nav.collapse') }}</span>
       </button>
     </div>
   </aside>
@@ -189,6 +190,7 @@
 
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
@@ -246,7 +248,8 @@ const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 
-const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
+const desktop = useMediaQuery('(min-width: 1024px)')
+const sidebarCollapsed = computed(() => desktop.value && appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
 const sidebarNavRef = ref<HTMLElement | null>(null)
@@ -884,6 +887,10 @@ function toggleTheme() {
 function closeMobile() {
   appStore.setMobileOpen(false)
 }
+
+watch(desktop, (isDesktop) => {
+  if (isDesktop) closeMobile()
+})
 
 function handleMenuItemClick(itemPath: string) {
   if (mobileOpen.value) {

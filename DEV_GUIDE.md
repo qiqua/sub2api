@@ -310,6 +310,18 @@ go test -tags=integration ./...
 golangci-lint run ./...
 ```
 
+### 定制镜像部署
+
+在 GitHub Actions 的 `Custom Docker Image` 成功发布 `ghcr.io/qiqua/sub2api:custom-main` 后，使用服务器上已有的 Compose 配置更新应用容器：
+
+```bash
+cd /opt/sub2api &&
+docker compose pull sub2api &&
+docker compose up -d --no-deps --force-recreate sub2api
+```
+
+管理端运维监控支持桌面滚轮和移动端触摸滚动；全屏模式顶部的「退出全屏」不会随内容滚走。
+
 ## 六、项目结构速览
 
 ```

@@ -115,7 +115,7 @@ export function useOnboardingTour(options: OnboardingOptions) {
       showProgress: true,
       steps,
       animate: true,
-      allowClose: false, // 禁止点击遮罩关闭
+      overlayClickBehavior: () => {},
       stagePadding: 4,
       popoverClass: 'theme-tour-popover',
       nextBtnText: t('common.next'),

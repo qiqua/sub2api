@@ -186,7 +186,8 @@ export default {
         }
       },
       fullscreen: {
-        enter: 'Enter Fullscreen'
+        enter: 'Enter Fullscreen',
+        exit: 'Exit Fullscreen'
       },
       diagnosis: {
         title: 'Smart Diagnosis',

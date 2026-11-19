@@ -1,6 +1,11 @@
 <template>
-  <component :is="isFullscreen ? 'div' : AppLayout" :class="isFullscreen ? 'flex h-[100dvh] overflow-hidden bg-gray-50 dark:bg-dark-950' : ''">
-    <div class="app-page-scroll w-full space-y-6" :class="{ 'p-4 md:p-6': isFullscreen }">
+  <component :is="isFullscreen ? 'div' : AppLayout" :class="isFullscreen ? 'flex h-[100dvh] min-w-0 flex-col overflow-hidden bg-gray-50 dark:bg-dark-950' : ''">
+    <div v-if="isFullscreen" class="flex shrink-0 justify-end px-3 py-2 sm:px-6">
+      <button type="button" class="btn btn-secondary btn-sm" @click="exitFullscreen">
+        {{ t('admin.ops.fullscreen.exit') }}
+      </button>
+    </div>
+    <div class="app-page-scroll w-full min-w-0 space-y-6 overflow-x-hidden" :class="{ 'flex-1 px-3 sm:px-6': isFullscreen }">
       <div
         v-if="errorMessage"
         class="rounded-2xl bg-red-50 p-4 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400"
@@ -36,19 +41,18 @@
         @open-settings="showSettingsDialog = true"
         @open-alert-rules="showAlertRulesCard = true"
         @enter-fullscreen="enterFullscreen"
-        @exit-fullscreen="exitFullscreen"
       />
 
       <div
         v-if="opsEnabled && !(loading && !hasLoadedOnce)"
-        class="space-y-6 pb-12 pr-1"
+        class="space-y-6 pb-12"
       >
         <!-- Row: Concurrency + Throughput -->
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-4">
-          <div class="lg:col-span-1 min-h-[360px]">
+        <div class="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-4">
+          <div class="min-h-[360px] min-w-0 xl:col-span-1">
             <OpsConcurrencyCard :platform-filter="platform" :group-id-filter="groupId" :refresh-token="dashboardRefreshToken" />
           </div>
-          <div class="lg:col-span-1 h-[360px]">
+          <div class="h-[360px] min-w-0 xl:col-span-1">
             <OpsSwitchRateTrendChart
               :points="switchTrend?.points ?? []"
               :loading="loadingSwitchTrend"
@@ -56,7 +60,7 @@
               :fullscreen="isFullscreen"
             />
           </div>
-          <div class="lg:col-span-2 h-[360px]">
+          <div class="h-[360px] min-w-0 xl:col-span-2">
             <OpsThroughputTrendChart
               :points="throughputTrend?.points ?? []"
               :by-platform="throughputTrend?.by_platform ?? []"
@@ -72,7 +76,7 @@
         </div>
 
         <!-- Row: Visual Analysis (baseline 3-up grid) -->
-        <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <div class="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 xl:grid-cols-3">
           <OpsLatencyChart :latency-data="latencyHistogram" :loading="loadingLatency" />
           <OpsErrorDistributionChart
             :data="errorDistribution"

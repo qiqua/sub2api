@@ -186,7 +186,8 @@ export default {
         endTime: '结束时间'
       },
       fullscreen: {
-        enter: '进入全屏'
+        enter: '进入全屏',
+        exit: '退出全屏'
       },
       diagnosis: {
         title: '智能诊断',

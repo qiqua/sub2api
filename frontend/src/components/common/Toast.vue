@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <div
-      class="pointer-events-none fixed right-4 top-4 z-[9999] space-y-3"
+      class="pointer-events-none fixed inset-x-4 top-4 z-[9999] space-y-3 sm:left-auto sm:w-96"
       aria-live="polite"
       aria-atomic="true"
     >
@@ -17,7 +17,7 @@
           v-for="toast in toasts"
           :key="toast.id"
           :class="[
-            'pointer-events-auto min-w-[320px] max-w-md overflow-hidden rounded-lg shadow-lg',
+            'pointer-events-auto w-full overflow-hidden rounded-lg shadow-lg',
             'bg-white dark:bg-dark-800',
             'border-l-4',
             getBorderColor(toast.type)
@@ -37,12 +37,12 @@
 
               <!-- Content -->
               <div class="min-w-0 flex-1">
-                <p v-if="toast.title" class="text-sm font-semibold text-gray-900 dark:text-white">
+                <p v-if="toast.title" class="break-words text-sm font-semibold text-gray-900 dark:text-white">
                   {{ toast.title }}
                 </p>
                 <p
                   :class="[
-                    'text-sm leading-relaxed',
+                    'break-words text-sm leading-relaxed',
                     toast.title
                       ? 'mt-1 text-gray-600 dark:text-gray-300'
                       : 'text-gray-900 dark:text-white'

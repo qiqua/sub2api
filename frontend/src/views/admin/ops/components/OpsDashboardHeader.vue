@@ -43,7 +43,6 @@ interface Emits {
   (e: 'openSettings'): void
   (e: 'openAlertRules'): void
   (e: 'enterFullscreen'): void
-  (e: 'exitFullscreen'): void
 }
 
 const props = defineProps<Props>()
@@ -859,10 +858,10 @@ function handleToolbarRefresh() {
 </script>
 
 <template>
-  <div :class="['flex flex-col gap-4 rounded-3xl bg-white shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700', props.fullscreen ? 'p-8' : 'p-6']">
+  <div :class="['flex min-w-0 flex-col gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700', props.fullscreen ? 'sm:p-8' : 'sm:p-6']">
     <!-- Top Toolbar -->
     <div class="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 pb-4 dark:border-dark-700">
-      <div>
+      <div class="min-w-0">
         <h1 class="flex items-center gap-2 text-xl font-black text-gray-900 dark:text-white">
           <svg class="h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -875,7 +874,7 @@ function handleToolbarRefresh() {
           {{ t('admin.ops.title') }}
         </h1>
 
-        <div v-if="!props.fullscreen" class="mt-1 flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+        <div v-if="!props.fullscreen" class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
           <span class="flex items-center gap-1.5" :title="props.loading ? t('admin.ops.loadingText') : t('admin.ops.ready')">
             <span class="relative flex h-2 w-2">
               <span class="relative inline-flex h-2 w-2 rounded-full" :class="props.loading ? 'bg-gray-400' : 'bg-green-500'"></span>
@@ -893,7 +892,7 @@ function handleToolbarRefresh() {
         </div>
       </div>
 
-      <div class="flex flex-wrap items-center gap-3">
+      <div class="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3" :class="{ 'w-full sm:w-auto': !props.fullscreen }">
         <template v-if="!props.fullscreen">
           <Select
             :model-value="platform"
@@ -991,17 +990,17 @@ function handleToolbarRefresh() {
       </div>
     </div>
 
-    <div v-if="overview" class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+    <div v-if="overview" class="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-12">
       <!-- Left: Health + Realtime -->
-      <div :class="['rounded-2xl bg-gray-50 dark:bg-dark-900 lg:col-span-5', props.fullscreen ? 'p-6' : 'p-4']">
-        <div class="grid h-full grid-cols-1 gap-6 md:grid-cols-[200px_1fr] md:items-center">
+      <div :class="['min-w-0 rounded-2xl bg-gray-50 p-4 dark:bg-dark-900 xl:col-span-5', props.fullscreen && 'sm:p-6']">
+        <div class="grid h-full grid-cols-1 gap-4 sm:gap-6 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
           <!-- 1) Health Score -->
           <div
             class="group relative flex cursor-pointer flex-col items-center justify-center rounded-xl py-2 transition-all hover:bg-white/60 dark:hover:bg-dark-800/60 md:border-r md:border-gray-200 md:pr-6 dark:md:border-dark-700"
           >
             <!-- Diagnosis Popover (hover) -->
             <div
-              class="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-72 -translate-x-1/2 opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 md:left-full md:top-0 md:ml-2 md:mt-0 md:translate-x-0"
+              class="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-72 max-w-[calc(100vw-3rem)] -translate-x-1/2 opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 sm:left-full sm:top-0 sm:ml-2 sm:mt-0 sm:translate-x-0"
             >
               <div class="rounded-xl bg-white p-4 shadow-xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10">
                 <h4 class="mb-3 border-b border-gray-100 pb-2 text-sm font-bold text-gray-900 dark:border-dark-700 dark:text-white flex items-center gap-2">
@@ -1102,7 +1101,7 @@ function handleToolbarRefresh() {
           </div>
 
           <!-- 2) Realtime Traffic -->
-          <div class="flex h-full flex-col justify-center py-2">
+          <div class="flex h-full min-w-0 flex-col justify-center py-2">
             <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div class="flex items-center gap-2">
                 <div class="relative flex h-3 w-3 shrink-0">
@@ -1152,11 +1151,11 @@ function handleToolbarRefresh() {
                 <div>
                   <div :class="[props.fullscreen ? 'text-xs' : 'text-[10px]', 'font-bold uppercase text-gray-400']">{{ t('admin.ops.peak') }}</div>
                   <div :class="[props.fullscreen ? 'text-base' : 'text-sm', 'mt-1 space-y-0.5 font-medium text-gray-600 dark:text-gray-400']">
-                    <div class="flex items-baseline gap-1.5">
+                    <div class="flex flex-wrap items-baseline gap-x-1.5">
                       <span class="font-black text-gray-900 dark:text-white">{{ realtimeQpsPeakLabel }}</span>
                       <span class="text-xs">QPS</span>
                     </div>
-                    <div class="flex items-baseline gap-1.5">
+                    <div class="flex flex-wrap items-baseline gap-x-1.5">
                       <span class="font-black text-gray-900 dark:text-white">{{ realtimeTpsPeakLabel }}</span>
                       <span class="text-xs">{{ t('admin.ops.tps') }}</span>
                     </div>
@@ -1167,11 +1166,11 @@ function handleToolbarRefresh() {
                 <div>
                   <div :class="[props.fullscreen ? 'text-xs' : 'text-[10px]', 'font-bold uppercase text-gray-400']">{{ t('admin.ops.average') }}</div>
                   <div :class="[props.fullscreen ? 'text-base' : 'text-sm', 'mt-1 space-y-0.5 font-medium text-gray-600 dark:text-gray-400']">
-                    <div class="flex items-baseline gap-1.5">
+                    <div class="flex flex-wrap items-baseline gap-x-1.5">
                       <span class="font-black text-gray-900 dark:text-white">{{ realtimeQpsAvgLabel }}</span>
                       <span class="text-xs">QPS</span>
                     </div>
-                    <div class="flex items-baseline gap-1.5">
+                    <div class="flex flex-wrap items-baseline gap-x-1.5">
                       <span class="font-black text-gray-900 dark:text-white">{{ realtimeTpsAvgLabel }}</span>
                       <span class="text-xs">{{ t('admin.ops.tps') }}</span>
                     </div>
@@ -1207,7 +1206,7 @@ function handleToolbarRefresh() {
       </div>
 
       <!-- Right: 6 cards (3 cols x 2 rows) -->
-      <div class="grid h-full grid-cols-1 content-center gap-4 sm:grid-cols-2 lg:col-span-7 lg:grid-cols-3">
+      <div class="grid min-w-0 grid-cols-1 content-center gap-4 sm:grid-cols-2 xl:col-span-7 xl:grid-cols-3">
         <!-- Card 1: Requests -->
         <div class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-900" style="order: 1;">
           <div class="flex items-center justify-between">

@@ -2,22 +2,22 @@
   <div
     class="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 dark:border-dark-700 dark:bg-dark-800 sm:px-6"
   >
-    <div class="flex flex-1 items-center justify-between sm:hidden">
-      <!-- Mobile pagination -->
+    <!-- Mobile pagination -->
+    <div class="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] items-center gap-1.5 sm:hidden">
       <button
         @click="goToPage(page - 1)"
         :disabled="page === 1"
-        class="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200 dark:hover:bg-dark-600"
+        class="min-w-0 justify-self-start rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-700 [overflow-wrap:anywhere] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200 dark:hover:bg-dark-600"
       >
         {{ t('pagination.previous') }}
       </button>
-      <span class="text-sm text-gray-700 dark:text-gray-300">
+      <span class="min-w-0 text-center text-sm text-gray-700 [overflow-wrap:anywhere] dark:text-gray-300">
         {{ t('pagination.pageOf', { page, total: totalPages }) }}
       </span>
       <button
         @click="goToPage(page + 1)"
         :disabled="page === totalPages"
-        class="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200 dark:hover:bg-dark-600"
+        class="min-w-0 justify-self-end rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-700 [overflow-wrap:anywhere] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200 dark:hover:bg-dark-600"
       >
         {{ t('pagination.next') }}
       </button>
