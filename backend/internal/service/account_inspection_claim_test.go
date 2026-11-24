@@ -132,7 +132,7 @@ func (r *scriptedAccountInspectionRepository) SaveRun(_ context.Context, run *Ac
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	err = r.ownerError(run.ID)
-	if err != nil && !(err == ErrAccountInspectionStopping && run.Status == AccountInspectionRunStopped) {
+	if err != nil && (err != ErrAccountInspectionStopping || run.Status != AccountInspectionRunStopped) {
 		return err
 	}
 	r.latestRun = inspectionRunCopy(run)
