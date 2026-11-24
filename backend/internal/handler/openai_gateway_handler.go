@@ -2362,7 +2362,7 @@ func (r *openAIWSTurnBillingRoute) revalidate(ctx context.Context, lookup func(c
 		return denied(err)
 	}
 	keyBillingBlocked := latest.Status == service.StatusAPIKeyExpired || latest.Status == service.StatusAPIKeyQuotaExhausted
-	if (!latest.IsActive() && !(r.simpleMode && keyBillingBlocked)) || (!r.simpleMode && (latest.IsExpired() || latest.IsQuotaExhausted())) {
+	if (!latest.IsActive() && (!r.simpleMode || !keyBillingBlocked)) || (!r.simpleMode && (latest.IsExpired() || latest.IsQuotaExhausted())) {
 		return denied(nil)
 	}
 	if len(latest.IPWhitelist) > 0 || len(latest.IPBlacklist) > 0 {

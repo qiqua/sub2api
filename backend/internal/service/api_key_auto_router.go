@@ -454,7 +454,7 @@ func (r *APIKeyAutoRouter) schedulableModelCandidates(ctx context.Context, grant
 		if grant.model != "" && (!acc.IsModelSupported(grant.model) || acc.isModelRateLimitedWithContext(ctx, grant.model)) {
 			continue
 		}
-		if !compositeListing && acc.Platform != grant.platform && !(mixed && acc.Platform == PlatformAntigravity && acc.IsMixedSchedulingEnabled()) {
+		if !compositeListing && acc.Platform != grant.platform && (!mixed || acc.Platform != PlatformAntigravity || !acc.IsMixedSchedulingEnabled()) {
 			continue
 		}
 		if opts.RequireBatchImage {

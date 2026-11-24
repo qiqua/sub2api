@@ -92,7 +92,7 @@ func (r *accountInspectionRepository) ClaimRun(ctx context.Context, resetCursor,
 	if resumeOnly && !settings.Enabled {
 		return nil, tx.Commit()
 	}
-	if resetCursor && !(recovered && settings.Enabled) {
+	if resetCursor && (!recovered || !settings.Enabled) {
 		latest, err := latestInspectionRun(ctx, tx)
 		if err != nil {
 			return nil, err
