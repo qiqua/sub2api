@@ -302,6 +302,19 @@ func isDeepSeekModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek-")
 }
 
+// Only billing treats routed names and gateway IDs as their underlying model.
+// Keep the raw model for matching operator cards and for gateway request handling.
+func deepseekPricingModel(model string) string {
+	model = strings.ToLower(strings.TrimSpace(lastSegment(model)))
+	if target := gatewayModelAliasTarget(model); target != "" {
+		model = target
+	}
+	if strings.HasPrefix(model, "deepseek-") {
+		return model
+	}
+	return ""
+}
+
 // deepseekPeakMultiplierAt 返回指定时刻的 DeepSeek 官方峰谷定价因子。
 // 官方口径（2026-08-23 起生效）：高峰价 = 2× 低谷价；高峰时段为
 // 01:00–04:00 与 06:00–10:00 UTC（半开区间），仅工作日；
@@ -319,10 +332,29 @@ func deepseekPeakMultiplierAt(now time.Time) float64 {
 	return 1.0
 }
 
-// isDeepSeekProModel 判断模型名是否归入 deepseek-v4-pro 档（含版本化名称，
-// 如 deepseek-v4-pro-0813）。
-func isDeepSeekProModel(model string) bool {
-	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "deepseek-v4-pro")
+// applyDeepSeekPeakPricing scales only the default fields on the off-peak card.
+func applyDeepSeekPeakPricing(model string, pricing *ModelPricing, at time.Time) *ModelPricing {
+	if deepseekPricingModel(model) == "" {
+		return pricing
+	}
+	if at.IsZero() {
+		at = timezone.Now()
+	}
+	mult := deepseekPeakMultiplierAt(at)
+	if mult == 1 {
+		return pricing
+	}
+	cloned := *pricing
+	if !cloned.priceOverrides.input {
+		cloned.InputPricePerToken *= mult
+	}
+	if !cloned.priceOverrides.output {
+		cloned.OutputPricePerToken *= mult
+	}
+	if !cloned.priceOverrides.cacheRead {
+		cloned.CacheReadPricePerToken *= mult
+	}
+	return &cloned
 }
 
 // BillingService 计费服务
@@ -920,7 +952,7 @@ func (s *BillingService) initFallbackPricing() {
 		CacheReadPricePerToken:     0.2e-6, // $0.20 per MTok (cache hit)
 		CacheCreation5mPrice:       2e-6,   // $2.00 per MTok
 		CacheCreation1hPrice:       4e-6,   // $4.00 per MTok
-		SupportsCacheBreakdown:     false,
+		SupportsCacheBreakdown:     true,
 	}
 	s.fallbackPrices["kimi-k3.1-pro-highspeed"] = &ModelPricing{
 		InputPricePerToken:         4e-6,   // $4.00 per MTok
@@ -929,7 +961,7 @@ func (s *BillingService) initFallbackPricing() {
 		CacheReadPricePerToken:     0.2e-6, // $0.20 per MTok (cache hit，与标准版同价)
 		CacheCreation5mPrice:       4e-6,   // $4.00 per MTok
 		CacheCreation1hPrice:       8e-6,   // $8.00 per MTok
-		SupportsCacheBreakdown:     false,
+		SupportsCacheBreakdown:     true,
 	}
 	s.fallbackPrices["kimi-k3"] = &ModelPricing{
 		InputPricePerToken:         3e-6,    // $3.00 per MTok (cache miss)
@@ -938,7 +970,7 @@ func (s *BillingService) initFallbackPricing() {
 		CacheReadPricePerToken:     0.30e-6, // $0.30 per MTok (cache hit)
 		CacheCreation5mPrice:       3e-6,    // $3.00 per MTok
 		CacheCreation1hPrice:       6e-6,    // $6.00 per MTok
-		SupportsCacheBreakdown:     false,
+		SupportsCacheBreakdown:     true,
 	}
 	s.fallbackPrices["kimi-k2.7-code"] = &ModelPricing{
 		InputPricePerToken:     0.95e-6, // $0.95 per MTok
@@ -1839,6 +1871,7 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 		if err != nil {
 			return nil, err
 		}
+		pricing = applyDeepSeekPeakPricing(input.Model, pricing, input.PricingAt)
 		breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongContextBilling && !input.DisableModelLongContextPricing)
 		applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, pricing.ReasoningEffortMultipliers))
 		return breakdown, nil
@@ -1910,24 +1943,8 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	// 内部已强制过）；分组/渠道自定义定价保留运营者配置，不强制覆盖官方价。
 	pricing = s.applyModelSpecificPricingPolicyEx(input.Model, pricing, resolved.Source == PricingSourceLiteLLM, pricingAt)
 
-	// DeepSeek 模型默认价卡按官方峰谷口径调整：高峰时段（01:00–04:00 与
-	// 06:00–10:00 UTC，仅工作日；北京时间周末全天低谷）按 2× 低谷价计费。
-	// 仅作用于默认价卡（Source=LiteLLM，无分组/渠道自定义定价）——分组/渠道
-	// 自定义定价及 override_file 显式覆盖的字段不叠加。先克隆再乘，避免污染共享价卡。
-	if resolved.Source == PricingSourceLiteLLM && isDeepSeekModel(input.Model) {
-		if mult := deepseekPeakMultiplierAt(pricingAt); mult > 1 {
-			cloned := *pricing
-			if !cloned.priceOverrides.input {
-				cloned.InputPricePerToken *= mult
-			}
-			if !cloned.priceOverrides.output {
-				cloned.OutputPricePerToken *= mult
-			}
-			if !cloned.priceOverrides.cacheRead {
-				cloned.CacheReadPricePerToken *= mult
-			}
-			pricing = &cloned
-		}
+	if resolved.Source == PricingSourceLiteLLM {
+		pricing = applyDeepSeekPeakPricing(input.Model, pricing, pricingAt)
 	}
 
 	// 官方长上下文阶梯仅在无区间定价时应用（区间定价已包含上下文分层）。
@@ -2232,10 +2249,10 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 	// 官方后续保留了 Pro 服务及其计费方式，Pro 不按日期切换成 Flash 价。
 	// 高峰时段倍率不在本函数处理，由 calculateTokenCost 按 deepseekPeakMultiplierAt
 	// 对默认价卡另行叠加（分组/渠道自定义定价不叠加）。
-	if forceDeepSeekRates && isDeepSeekModel(model) {
+	if id := deepseekPricingModel(model); forceDeepSeekRates && id != "" {
 		cloned := *pricing
 		inputPrice, outputPrice, cacheReadPrice := deepseekFlashOffPeakInputPrice, deepseekFlashOffPeakOutputPrice, deepseekFlashOffPeakCacheRead
-		if isDeepSeekProModel(model) {
+		if strings.Contains(id, "deepseek-v4-pro") {
 			inputPrice, outputPrice, cacheReadPrice = deepseekProOffPeakInputPrice, deepseekProOffPeakOutputPrice, deepseekProOffPeakCacheRead
 		}
 		if !cloned.priceOverrides.input {

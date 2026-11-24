@@ -31,13 +31,13 @@
 | 密钥分组 | 请求与恢复行为 |
 | --- | --- |
 | OpenAI、Grok | 仅列出启用且 `allow_image_generation` 为真的分组密钥。文生图走 `POST /v1/images/generations`，带参考图走 `POST /v1/images/edits`（multipart）。模型从 `/v1/models` 发现，也可填分组支持的准确模型 ID。同步请求期间需保持页面打开。 |
-| Gemini | 仅列出启用且 `allow_batch_image_generation` 为真的 Gemini 分组密钥。模型来自 `/v1/images/batches/models`。每次向 `POST /v1/images/batches` 提交一项、生成一张，带 `Idempotency-Key`。受理后节点保存批次 ID 和提交密钥的数字 ID，重新打开原画布可用原密钥继续查询和取图。 |
+| Gemini | 画布在提交前保存原密钥的数字 ID、请求标识、模型、提示词、画幅和参考图。响应中断后，重新打开画布会用原密钥查询该标识，取回已有批次。网关明确返回没有批次时，用户可以点「重试原请求」，沿用原标识和原参数。 |
 
 界面支持 `1:1`、`3:2`、`2:3`。所有生成沿用网关现有分组、余额和计费规则。维护时保留两项约束：查询失败时保留已受理任务的编号，重试只发读取请求；下载上游返回的外部图片 URL 时不携带站内密钥。移除画布上的任务节点不会取消网关任务。协议回归见 [gateway.spec.ts](../frontend/src/features/image-canvas/__tests__/gateway.spec.ts)。
 
 ## 数据在哪里
 
-画布及图片 Blob 按登录用户 ID 保存在当前浏览器的 IndexedDB `sub2api-image-canvas`。`localStorage` 只为画布记录该用户上次打开的画布 ID。清理站点存储会丢失本机草稿，换设备前需导出。
+画布及图片 Blob 按登录用户 ID 保存在当前浏览器的 IndexedDB `sub2api-image-canvas`。每个标签页记住自己打开的画布。保存或删除时，IndexedDB 在同一事务中核对版本。其他标签页已经修改或删除原画布时，本标签页的草稿会另存为「恢复副本」，可从「我的画布」打开。清理站点存储会丢失本机草稿，换设备前需导出。
 
 一张画布最多 256 个节点，PNG、JPEG、WebP 单张最多 10 MiB，画布图片合计最多 32 MiB，归档最多 48 MiB。归档包含图片、提示词、模型、节点位置、父子关系和视口。API 密钥、任务归属及本地错误不会写入归档；有未完成的图片节点时，先取回结果或移除该节点再导出。 [数据模型](../frontend/src/features/image-canvas/document.ts) · [存储与导入导出](../frontend/src/features/image-canvas/storage.ts)
 

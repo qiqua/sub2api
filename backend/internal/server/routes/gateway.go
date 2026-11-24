@@ -278,6 +278,7 @@ func RegisterGatewayRoutes(
 		gateway.POST("/images/batches", h.BatchImage.Submit)
 		gateway.GET("/images/batches", h.BatchImage.List)
 		gateway.GET("/images/batches/models", h.BatchImage.Models)
+		gateway.GET("/images/batches/by-idempotency-key", h.BatchImage.GetByIdempotencyKey)
 		gateway.GET("/images/batches/:id", h.BatchImage.Get)
 		gateway.GET("/images/batches/:id/items", h.BatchImage.Items)
 		gateway.GET("/images/batches/:id/items/:custom_id/content", h.BatchImage.ItemContent)
@@ -598,7 +599,7 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 		routePath := c.FullPath()
 		model := requestmodel.FromBodyForRoute(routePath, c.GetHeader("Content-Type"), body)
 		if model != "" {
-			decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path))
+			decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, service.CompositeRouteEndpointForPath(c.Request.URL.Path))
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
 				c.Abort()
@@ -684,28 +685,4 @@ func compositeGeminiModelFromParams(c *gin.Context) string {
 		return strings.TrimSpace(modelAction[:idx])
 	}
 	return modelAction
-}
-
-func compositeRouteEndpointForPath(path string) string {
-	switch {
-	case strings.Contains(path, "/messages/count_tokens"):
-		return service.CompositeRouteEndpointCountTokens
-	case strings.Contains(path, "/messages"):
-		return service.CompositeRouteEndpointMessages
-	case strings.Contains(path, "/responses"),
-		strings.Contains(path, "/alpha/search"),
-		strings.Contains(path, "/realtime/calls"),
-		strings.HasSuffix(strings.TrimRight(path, "/"), "/live"):
-		return service.CompositeRouteEndpointResponses
-	case strings.Contains(path, "/chat/completions"):
-		return service.CompositeRouteEndpointChatCompletions
-	case strings.Contains(path, "/embeddings"):
-		return service.CompositeRouteEndpointEmbeddings
-	case strings.Contains(path, "/images/"):
-		return service.CompositeRouteEndpointImages
-	case strings.Contains(path, "/v1beta/"):
-		return service.CompositeRouteEndpointGemini
-	default:
-		return service.CompositeRouteEndpointAny
-	}
 }

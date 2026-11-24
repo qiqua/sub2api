@@ -11,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -21,13 +23,17 @@ import (
 )
 
 type AsyncImageHandler struct {
-	tasks   *service.ImageTaskService
-	openAI  *OpenAIGatewayHandler
-	execute func(platform string, c *gin.Context)
+	tasks          *service.ImageTaskService
+	openAI         *OpenAIGatewayHandler
+	reauthenticate gin.HandlerFunc
+	execute        func(platform string, c *gin.Context)
 }
 
-func NewAsyncImageHandler(tasks *service.ImageTaskService, openAI *OpenAIGatewayHandler) *AsyncImageHandler {
+func NewAsyncImageHandler(tasks *service.ImageTaskService, openAI *OpenAIGatewayHandler, subscriptions *service.SubscriptionService) *AsyncImageHandler {
 	h := &AsyncImageHandler{tasks: tasks, openAI: openAI}
+	if openAI != nil && openAI.apiKeyService != nil && openAI.cfg != nil {
+		h.reauthenticate = middleware2.NewAPIKeyReentryAuth(openAI.apiKeyService, subscriptions, openAI.cfg)
+	}
 	h.execute = h.executeWithGateway
 	return h
 }
@@ -53,15 +59,12 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "async image tasks are not enabled")
 		return
 	}
-	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
-	if !ok || apiKey == nil || apiKey.UserID <= 0 || apiKey.ID <= 0 {
+	primary, ok := imageTaskAuthenticatedKey(c)
+	if !ok || primary.GroupID == nil || primary.Group == nil || primary.Group.ID != *primary.GroupID {
 		imageTaskError(c, service.ErrImageTaskForbidden)
 		return
 	}
-	platform := ""
-	if apiKey.Group != nil {
-		platform = apiKey.Group.Platform
-	}
+	platform := imageTaskPlatform(c, primary)
 	if platform != service.PlatformOpenAI && platform != service.PlatformGrok {
 		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "Images API is not supported for this platform")
 		return
@@ -89,16 +92,32 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "streaming image requests cannot be submitted as asynchronous tasks")
 		return
 	}
-	apiKey = h.applyAutoRouteForAsyncImage(c, apiKey, platform, body)
+	model, moderationBody, err := h.parseAsyncImageRequest(c, platform, body)
+	if err != nil {
+		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	var router *service.APIKeyAutoRouter
+	if h.openAI != nil {
+		router = h.openAI.apiKeyAutoRouter
+	}
+	publicModel := clientRequestedModel(c, model)
+	routingModel := model
+	if platform == service.PlatformGrok {
+		if resolved, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context()); ok {
+			routingModel = resolved
+		}
+		routingModel = service.NormalizeGrokMediaModelForEndpoint(service.GrokMediaEndpointImagesGenerations, routingModel, false)
+	}
+	apiKey := applyImageTaskRoute(c, router, nil, primary, routingModel, publicModel, service.WithAPIKeyAutoRouteImageGenerationRequired())
+	if apiKey == nil {
+		return
+	}
 	if !service.GroupAllowsImageGeneration(apiKey.Group) {
 		imageTaskJSONError(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
 	}
-	if err := h.validateRequest(c, platform, body); err != nil {
-		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
-		return
-	}
-	if !h.checkSecurityAuditBeforeSubmit(c, apiKey, platform, body) {
+	if !h.checkSecurityAuditBeforeSubmit(c, apiKey, publicModel, moderationBody) {
 		return
 	}
 
@@ -109,6 +128,15 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		}
 		return
 	}
+	grant := imageTaskGrant{
+		userID: primary.UserID, keyID: primary.ID, primaryID: *primary.GroupID, groupID: *apiKey.GroupID,
+		mode: service.NormalizeAPIKeyRoutingMode(primary.RoutingMode), platform: apiKey.Group.Platform,
+		billingType: apiKey.Group.SubscriptionType, publicModel: publicModel,
+	}
+	if sub, _ := middleware2.GetSubscriptionFromContext(c); sub != nil {
+		grant.subscriptionID = sub.ID
+	}
+	taskCtx.Set(imageTaskGrantKey, grant)
 	task, err := h.tasks.Create(c.Request.Context(), service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID})
 	if err != nil {
 		cancel()
@@ -133,22 +161,23 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	go h.run(task.ID, platform, taskCtx, recorder, cancel)
 }
 
-func (h *AsyncImageHandler) applyAutoRouteForAsyncImage(c *gin.Context, apiKey *service.APIKey, platform string, body []byte) *service.APIKey {
-	if h == nil || h.openAI == nil || apiKey == nil {
-		return apiKey
-	}
-	requestModel := ""
-	if platform == service.PlatformGrok {
-		requestModel = service.ParseGrokMediaRequest(c.GetHeader("Content-Type"), body).Model
-	} else if h.openAI.gatewayService != nil {
-		if parsed, err := h.openAI.gatewayService.ParseOpenAIImagesRequest(c, body); err == nil {
-			requestModel = parsed.Model
-		}
-	}
-	return applyAPIKeyAutoRoute(c, h.openAI.apiKeyAutoRouter, nil, apiKey, requestModel, service.WithAPIKeyAutoRouteImageGenerationRequired())
+func imageTaskAuthenticatedKey(c *gin.Context) (*service.APIKey, bool) {
+	key, ok := middleware2.GetAPIKeyFromContext(c)
+	subject, hasSubject := middleware2.GetAuthSubjectFromContext(c)
+	return key, ok && key != nil && key.ID > 0 && key.UserID > 0 && hasSubject && subject.UserID == key.UserID
 }
 
-func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, apiKey *service.APIKey, platform string, body []byte) bool {
+func imageTaskPlatform(c *gin.Context, key *service.APIKey) string {
+	if forced, _ := c.Request.Context().Value(ctxkey.ForcePlatform).(string); forced != "" {
+		return forced
+	}
+	if key.Group.Platform == service.PlatformComposite {
+		return effectiveAPIKeyPlatform(c, key)
+	}
+	return key.Group.Platform
+}
+
+func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, apiKey *service.APIKey, model string, moderationBody []byte) bool {
 	if h == nil || h.openAI == nil {
 		return true
 	}
@@ -156,19 +185,6 @@ func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, apiKe
 	if !ok {
 		imageTaskJSONError(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return false
-	}
-	model := ""
-	moderationBody := body
-	if platform == service.PlatformGrok {
-		parsed := service.ParseGrokMediaRequest(c.GetHeader("Content-Type"), body)
-		model, moderationBody = parsed.Model, parsed.ModerationBody()
-	} else if h.openAI.gatewayService != nil {
-		parsed, err := h.openAI.gatewayService.ParseOpenAIImagesRequest(c, body)
-		if err != nil {
-			imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
-			return false
-		}
-		model, moderationBody = parsed.Model, parsed.ModerationBody()
 	}
 	if len(moderationBody) == 0 {
 		c.Set(securityAuditCompletedContextKey, true)
@@ -210,37 +226,116 @@ func (h *AsyncImageHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
-func (h *AsyncImageHandler) validateRequest(c *gin.Context, platform string, body []byte) error {
-	if h.openAI == nil || h.openAI.gatewayService == nil {
-		return nil
-	}
+func (h *AsyncImageHandler) parseAsyncImageRequest(c *gin.Context, platform string, body []byte) (string, []byte, error) {
 	if platform == service.PlatformGrok {
 		parsed := service.ParseGrokMediaRequest(c.GetHeader("Content-Type"), body)
 		if strings.TrimSpace(parsed.Model) == "" {
-			return errors.New("model is required")
+			return "", nil, errors.New("model is required")
 		}
-		return nil
+		return parsed.Model, parsed.ModerationBody(), nil
+	}
+	if h.openAI == nil || h.openAI.gatewayService == nil {
+		return requestmodel.FromBody(c.GetHeader("Content-Type"), body), body, nil
 	}
 	parsed, err := h.openAI.gatewayService.ParseOpenAIImagesRequest(c, body)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	if parsed.Stream {
-		return errors.New("streaming image requests cannot be submitted as asynchronous tasks")
+		return "", nil, errors.New("streaming image requests cannot be submitted as asynchronous tasks")
 	}
-	return nil
+	return parsed.Model, parsed.ModerationBody(), nil
 }
 
 func (h *AsyncImageHandler) executeWithGateway(platform string, c *gin.Context) {
-	if h.openAI == nil {
+	if h.openAI == nil || h.reauthenticate == nil {
 		imageTaskJSONError(c, http.StatusServiceUnavailable, "api_error", "image gateway is unavailable")
 		return
+	}
+	grant, _ := c.Get(imageTaskGrantKey)
+	bound, ok := grant.(imageTaskGrant)
+	if !ok {
+		imageTaskError(c, service.ErrImageTaskForbidden)
+		return
+	}
+	// The detached request keeps its body reservation and original client address.
+	// Replace the copied authorization state before entering either gateway.
+	c.Set(string(middleware2.ContextKeyAPIKey), nil)
+	c.Set(string(middleware2.ContextKeySubscription), nil)
+	c.Set(string(middleware2.ContextKeyUser), nil)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, (*service.Group)(nil)))
+	h.reauthenticate(c)
+	if c.Writer.Written() {
+		return
+	}
+	fresh, ok := imageTaskAuthenticatedKey(c)
+	if !ok || fresh.ID != bound.keyID || fresh.UserID != bound.userID ||
+		fresh.GroupID == nil || *fresh.GroupID != bound.primaryID || fresh.Group == nil ||
+		fresh.Group.Platform != bound.platform || service.NormalizeAPIKeyRoutingMode(fresh.RoutingMode) != bound.mode ||
+		imageTaskPlatform(c, fresh) != platform {
+		imageTaskError(c, service.ErrImageTaskForbidden)
+		return
+	}
+	if fresh.Group.Platform == service.PlatformComposite && bound.mode != service.APIKeyRoutingModeAuto {
+		if h.openAI.compositeResolver == nil {
+			imageTaskError(c, service.ErrImageTaskForbidden)
+			return
+		}
+		route, err := h.openAI.compositeResolver.Resolve(c.Request.Context(), bound.groupID, bound.publicModel, service.CompositeRouteEndpointImages)
+		upstream, _ := service.ResolvedUpstreamModelFromContext(c.Request.Context())
+		if err != nil || !route.Matched || route.TargetPlatform != platform || route.UpstreamModel != upstream {
+			imageTaskError(c, service.ErrImageTaskForbidden)
+			return
+		}
 	}
 	if platform == service.PlatformGrok {
 		h.openAI.GrokImages(c)
 		return
 	}
 	h.openAI.Images(c)
+}
+
+const imageTaskGrantKey = "async_image_task_grant"
+
+type imageTaskGrant struct {
+	userID, keyID, primaryID, groupID, subscriptionID int64
+	mode, platform, billingType, publicModel          string
+}
+
+// On worker reentry, resolve against the freshly authenticated primary key but
+// keep scheduling, auditing and settlement on the group admitted at submission.
+func applyImageTaskRoute(c *gin.Context, router *service.APIKeyAutoRouter, log *zap.Logger, key *service.APIKey, routingModel, publicModel string, opts ...service.APIKeyAutoRouteOption) *service.APIKey {
+	value, reentry := c.Get(imageTaskGrantKey)
+	bound, _ := value.(imageTaskGrant)
+	if reentry {
+		opts = append(opts, service.WithAPIKeyAutoRoutePinnedGroup(bound.groupID))
+	}
+	if len(middleware2.AutoRoutePublicModels(c)) == 0 {
+		opts = append(opts, service.WithAPIKeyAutoRoutePublicModels(publicModel))
+	}
+	routed := applyAPIKeyAutoRoute(c, router, log, key, routingModel, opts...)
+	if routed == nil {
+		return nil
+	}
+	if routed.Group != nil && !routed.Group.ModelAllowlist.Allows(publicModel) {
+		imageTaskJSONError(c, http.StatusNotFound, "model_not_found", "Model is not available for this group")
+		return nil
+	}
+	if !reentry {
+		return routed
+	}
+	sub, _ := middleware2.GetSubscriptionFromContext(c)
+	var subID int64
+	if sub != nil {
+		subID = sub.ID
+	}
+	if routed.Group == nil || routed.Group.ID != bound.groupID || routed.Group.Platform != bound.platform ||
+		routed.Group.SubscriptionType != bound.billingType || subID != bound.subscriptionID ||
+		blockedModelAllowlistCandidate(routed.Group, middleware2.AutoRoutePublicModels(c)) != "" {
+		imageTaskError(c, service.ErrImageTaskForbidden)
+		return nil
+	}
+	return routed
 }
 
 func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, recorder *httptest.ResponseRecorder, cancel context.CancelFunc) {

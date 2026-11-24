@@ -1,16 +1,17 @@
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
-import { createBoard, type CanvasBoard, type CanvasNode, type Viewport } from './document'
-import { deleteBoard, importBoard, listBoards, loadBoard, saveBoard } from './storage'
+import { createBoard, newId, type CanvasBoard, type CanvasNode, type Viewport } from './document'
+import { CanvasConflictError, deleteBoard, importBoard, listBoards, loadBoard, saveBoard } from './storage'
 
 type SaveState = 'saved' | 'pending' | 'saving' | 'failed'
 const historyLimit = 40
 
-export function useCanvasWorkspace(userId: number, defaultName: () => string) {
+export function useCanvasWorkspace(userId: number, defaultName: () => string, conflictName = (name: string) => `${name} (recovered)`) {
   const board = shallowRef<CanvasBoard | null>(null)
   const boards = shallowRef<{ id: string; name: string }[]>([])
   const busy = ref(false)
   const saveState = ref<SaveState>('saved')
   const loadFailed = ref(false)
+  const recoveredBoard = ref('')
   const previous = shallowRef<CanvasNode[][]>([])
   const next = shallowRef<CanvasNode[][]>([])
   const activeKey = `sub2api:canvas:active:${userId}`
@@ -20,8 +21,10 @@ export function useCanvasWorkspace(userId: number, defaultName: () => string) {
   let timer: ReturnType<typeof setTimeout> | undefined
   let writeQueue: Promise<void> = Promise.resolve()
   let disposed = false
+  let needsFork = false
 
   function rememberActive(id: string) {
+    try { sessionStorage.setItem(activeKey, id) } catch { /* Fall back to the last used board. */ }
     try { localStorage.setItem(activeKey, id) } catch { /* IndexedDB is the source of truth. */ }
   }
 
@@ -40,24 +43,53 @@ export function useCanvasWorkspace(userId: number, defaultName: () => string) {
     rememberActive(value.id)
   }
 
-  async function flush() {
-    clearTimeout(timer)
-    const snapshot = board.value
-    if (!snapshot || revision === savedRevision) return
+  async function forkCurrent() {
+    const current = board.value!
     const writing = revision
-    saveState.value = 'saving'
-    // Serialize snapshots so a slow write cannot put an older edit back on disk.
-    const pending = writeQueue.then(() => saveBoard(userId, snapshot))
-    writeQueue = pending.catch(() => {})
-    try {
-      await pending
-      if (snapshot.id !== board.value?.id) return
-      savedRevision = writing
-      if (revision === writing) saveState.value = 'saved'
-    } catch (error) {
-      if (snapshot.id === board.value?.id && revision === writing) saveState.value = 'failed'
+    const copy = { ...current, id: newId(), name: conflictName(current.name.slice(0, 100)).slice(0, 120), version: undefined }
+    const version = await saveBoard(userId, copy, undefined)
+    // Keep edits made while the fork and its assets were being saved.
+    const latest = board.value!
+    const name = latest.name === current.name ? copy.name : conflictName(latest.name.slice(0, 100)).slice(0, 120)
+    board.value = { ...latest, id: copy.id, name, version }
+    savedRevision = writing
+    saveState.value = revision === writing ? 'saved' : 'pending'
+    recoveredBoard.value = copy.name
+    rememberActive(copy.id)
+    boards.value = [{ id: copy.id, name: copy.name }, ...boards.value]
+    try { boards.value = await listBoards(userId) } catch { /* The copy is already committed. */ }
+  }
+
+  function flush(): Promise<void> {
+    clearTimeout(timer)
+    // After a conflict, retries may only write to a new board, even if the fork hit quota.
+    const pending = writeQueue.then(async () => {
+      const snapshot = board.value
+      if (!snapshot || savedRevision === revision) return
+      const writing = revision
+      saveState.value = 'saving'
+      if (needsFork) {
+        await forkCurrent()
+        needsFork = false
+        return
+      }
+      try {
+        const version = await saveBoard(userId, snapshot, snapshot.version)
+        board.value = { ...board.value!, version }
+        savedRevision = writing
+        saveState.value = revision === writing ? 'saved' : 'pending'
+      } catch (error) {
+        if (!(error instanceof CanvasConflictError)) throw error
+        needsFork = true
+        await forkCurrent()
+        needsFork = false
+      }
+    }).catch(error => {
+      saveState.value = 'failed'
       throw error
-    }
+    })
+    writeQueue = pending.catch(() => {})
+    return pending
   }
 
   function update(value: CanvasBoard) {
@@ -101,7 +133,7 @@ export function useCanvasWorkspace(userId: number, defaultName: () => string) {
     update({ ...board.value, nodes: [...board.value.nodes, node] })
   }
 
-  function patchResult(id: string, patch: Pick<CanvasNode, 'image' | 'job' | 'error'>) {
+  function patchResult(id: string, patch: Pick<CanvasNode, 'image' | 'job' | 'intent' | 'error'>) {
     if (!board.value) return
     const patchNodes = (nodes: CanvasNode[]) => nodes.map(n => n.id === id ? { ...n, ...patch } : n)
     previous.value = previous.value.map(patchNodes)
@@ -114,10 +146,10 @@ export function useCanvasWorkspace(userId: number, defaultName: () => string) {
   }
 
   async function install(value: CanvasBoard) {
-    await saveBoard(userId, value)
+    const version = await saveBoard(userId, value, undefined)
     if (disposed) return
     boards.value = [{ id: value.id, name: value.name }, ...boards.value.filter(b => b.id !== value.id)]
-    activate(value)
+    activate({ ...value, version })
   }
 
   async function initialize() {
@@ -130,7 +162,8 @@ export function useCanvasWorkspace(userId: number, defaultName: () => string) {
       if (disposed) return
       boards.value = entries
       let last: string | null = null
-      try { last = localStorage.getItem(activeKey) } catch { /* Use the last saved canvas. */ }
+      try { last = sessionStorage.getItem(activeKey) } catch { /* Use the shared last board. */ }
+      if (!last) try { last = localStorage.getItem(activeKey) } catch { /* Use the last saved canvas. */ }
       const entry = entries.find(b => b.id === last) || entries[0]
       const existing = entry && await loadBoard(userId, entry.id)
       if (disposed) return
@@ -175,14 +208,23 @@ export function useCanvasWorkspace(userId: number, defaultName: () => string) {
     const old = board.value
     if (!old) return
     await change(async () => {
-      const others = (await listBoards(userId)).filter(b => b.id !== old.id)
-      const remaining = others[0] && await loadBoard(userId, others[0].id)
-      const replacement = remaining || createBoard(defaultName())
-      if (!remaining) await saveBoard(userId, replacement)
-      await deleteBoard(userId, old.id)
+      // A conflicting pre-delete flush already preserved this tab as a separate board.
+      if (board.value?.id !== old.id) return
+      try {
+        await deleteBoard(userId, old.id, board.value.version!)
+      } catch (error) {
+        if (!(error instanceof CanvasConflictError)) throw error
+        // Keep the stale snapshot retryable if storage cannot hold a second copy yet.
+        needsFork = true
+        revision++
+        await flush()
+        return
+      }
       if (disposed) return
-      boards.value = [{ id: replacement.id, name: replacement.name }, ...others.filter(b => b.id !== replacement.id)]
-      activate(replacement)
+      boards.value = await listBoards(userId)
+      const remaining = boards.value[0] && await loadBoard(userId, boards.value[0].id)
+      if (remaining) activate(remaining)
+      else await install(createBoard(defaultName()))
     })
   }
 
@@ -192,7 +234,7 @@ export function useCanvasWorkspace(userId: number, defaultName: () => string) {
   })
 
   return {
-    board, boards, busy, saveState, loadFailed, initialize, open, newBoard, importFile, rename, remove, flush,
+    board, boards, busy, saveState, recoveredBoard, loadFailed, initialize, open, newBoard, importFile, rename, remove, flush,
     setNodes, setViewport, finishEdit: () => { editGroup = undefined }, startResult, patchResult,
     canUndo: computed(() => previous.value.length > 0), canRedo: computed(() => next.value.length > 0), undo, redo,
   }

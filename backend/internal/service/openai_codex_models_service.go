@@ -228,6 +228,21 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 	return nil
 }
 
+// RestrictRoutedCodexModelsManifest applies the primary group's permissions to the selected group's final manifest.
+func RestrictRoutedCodexModelsManifest(manifest *OpenAIModelsResponse, allowlist GroupModelAllowlist, ifNoneMatch string) error {
+	body, _, err := mergeConfiguredCodexModelsManifest(manifest.Body, nil, allowlist.Models, allowlist.Enabled)
+	if err != nil {
+		return err
+	}
+	manifest.Body = body
+	manifest.ETag = codexModelsManifestBodyETag(body)
+	if codexModelsManifestETagMatches(ifNoneMatch, manifest.ETag) {
+		manifest.Body = nil
+		manifest.NotModified = true
+	}
+	return nil
+}
+
 // loadCodexGroupCatalogAccounts separates picker membership from capability
 // intersection. visible accounts are currently schedulable and decide which
 // public aliases appear. catalog accounts are persistently enabled group

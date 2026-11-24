@@ -85,6 +85,16 @@ func mustAPIKey(t *testing.T, c *gin.Context) *service.APIKey {
 	return apiKey
 }
 
+type systemOneAutoRouteUserRepo struct{ service.UserRepository }
+
+func (systemOneAutoRouteUserRepo) GetByID(_ context.Context, id int64) (*service.User, error) {
+	return &service.User{ID: id, Status: service.StatusActive, Balance: 5}, nil
+}
+
+func (r *systemOneAutoRouteGroupRepo) GetByIDLite(ctx context.Context, id int64) (*service.Group, error) {
+	return r.GetByID(ctx, id)
+}
+
 type systemOneAutoRouteGroupRepo struct {
 	service.GroupRepository
 	groups map[int64]*service.Group
@@ -139,7 +149,7 @@ func TestSystemOneAppliesAPIKeyRoutingBeforeScheduling(t *testing.T) {
 			h := &GatewayHandler{
 				cfg:               &config.Config{Gateway: config.GatewayConfig{MaxBodySize: 1 << 20}},
 				gatewayService:    &service.GatewayService{},
-				apiKeyAutoRouter:  service.NewAPIKeyAutoRouter(groupRepo, accountRepo, capacityService),
+				apiKeyAutoRouter:  service.NewAPIKeyAutoRouter(groupRepo, accountRepo, capacityService, systemOneAutoRouteUserRepo{}, nil, nil, nil),
 				concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 0),
 			}
 

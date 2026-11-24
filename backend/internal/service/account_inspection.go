@@ -203,13 +203,22 @@ type AccountInspectionBatchStats struct {
 	InfraErrors int
 }
 
+var (
+	ErrAccountInspectionRunning   = errors.New("account inspection is already running")
+	ErrAccountInspectionLeaseLost = errors.New("account inspection run ownership was lost")
+	ErrAccountInspectionStopping  = errors.New("account inspection run is stopping")
+)
+
+const inspectionDBTimeout = 10 * time.Second
+
 type AccountInspectionRepository interface {
 	GetSettings(ctx context.Context) (AccountInspectionSettings, error)
-	SaveSettings(ctx context.Context, settings AccountInspectionSettings) (AccountInspectionSettings, error)
-	CreateRun(ctx context.Context, settings AccountInspectionSettings, total int64) (*AccountInspectionRun, error)
+	EditSettings(ctx context.Context, edit func(*AccountInspectionSettings)) (AccountInspectionSettings, error)
+	ClaimRun(ctx context.Context, resetCursor, resumeOnly bool) (*AccountInspectionRun, error)
 	GetLatestRun(ctx context.Context) (*AccountInspectionRun, error)
-	GetRun(ctx context.Context, id int64) (*AccountInspectionRun, error)
-	UpdateRun(ctx context.Context, run *AccountInspectionRun) error
+	RequestStop(ctx context.Context) (*AccountInspectionRun, error)
+	RenewRun(ctx context.Context, id int64) error
+	SaveRun(ctx context.Context, run *AccountInspectionRun, cursor *int64) error
 	ListCandidates(ctx context.Context, settings AccountInspectionSettings) (AccountInspectionCandidateBatch, error)
 	CountCandidates(ctx context.Context, settings AccountInspectionSettings) (int64, error)
 	SaveResult(ctx context.Context, result AccountInspectionResult) error
@@ -228,6 +237,10 @@ type AccountInspectionService struct {
 	tester       AccountInspectionTester
 	rateLimitSvc *RateLimitService
 
+	lifetime          context.Context
+	shutdown          context.CancelFunc
+	heartbeatInterval time.Duration
+
 	mu        sync.Mutex
 	cancel    context.CancelFunc
 	runningID int64
@@ -240,11 +253,15 @@ func NewAccountInspectionService(
 	tester AccountInspectionTester,
 	rateLimitSvc *RateLimitService,
 ) *AccountInspectionService {
+	lifetime, shutdown := context.WithCancel(context.Background())
 	return &AccountInspectionService{
-		repo:         repo,
-		adminSvc:     adminSvc,
-		tester:       tester,
-		rateLimitSvc: rateLimitSvc,
+		repo:              repo,
+		adminSvc:          adminSvc,
+		tester:            tester,
+		rateLimitSvc:      rateLimitSvc,
+		lifetime:          lifetime,
+		shutdown:          shutdown,
+		heartbeatInterval: 4 * time.Second,
 	}
 }
 
@@ -265,18 +282,14 @@ func (s *AccountInspectionService) Start() {
 	}
 	s.startOnce.Do(func() {
 		go func() {
-			time.Sleep(3 * time.Second)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			settings, err := s.repo.GetSettings(ctx)
-			if err != nil {
-				slog.Warn("account_inspection.load_settings_failed", "error", err)
-				return
-			}
-			if settings.Enabled {
-				if _, err := s.StartRun(context.Background()); err != nil {
+			delay := 3 * time.Second
+			for sleepAccountInspectionWithContext(s.lifetime, delay) {
+				_, err := s.startRun(s.lifetime, false, true)
+				if err != nil && !errors.Is(err, ErrAccountInspectionRunning) && s.lifetime.Err() == nil {
 					slog.Warn("account_inspection.resume_failed", "error", err)
 				}
+				// A replica can die after every other replica has already started.
+				delay = 30 * time.Second
 			}
 		}()
 	})
@@ -286,14 +299,7 @@ func (s *AccountInspectionService) Stop() {
 	if s == nil {
 		return
 	}
-	s.mu.Lock()
-	cancel := s.cancel
-	s.cancel = nil
-	s.runningID = 0
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
+	s.shutdown()
 }
 
 func (s *AccountInspectionService) GetStatus(ctx context.Context) (AccountInspectionStatus, error) {
@@ -307,7 +313,6 @@ func (s *AccountInspectionService) GetStatus(ctx context.Context) (AccountInspec
 	if err != nil {
 		return AccountInspectionStatus{}, err
 	}
-	run = s.reconcileOrphanedActiveRun(ctx, run)
 
 	runID := int64(0)
 	total := int64(0)
@@ -340,216 +345,211 @@ func (s *AccountInspectionService) GetStatus(ctx context.Context) (AccountInspec
 
 func (s *AccountInspectionService) UpdateSettings(ctx context.Context, settings AccountInspectionSettings) (AccountInspectionSettings, error) {
 	settings = NormalizeAccountInspectionSettings(settings)
-	current, err := s.repo.GetSettings(ctx)
-	if err == nil {
+	ctx, cancel := context.WithTimeout(ctx, inspectionDBTimeout)
+	defer cancel()
+	return s.repo.EditSettings(ctx, func(current *AccountInspectionSettings) {
 		settings.Enabled = current.Enabled
-		if sameAccountInspectionScanScope(settings, current) && settings.Cursor == 0 {
+		if !SameAccountInspectionScanScope(settings, *current) {
+			settings.Cursor = 0
+		} else if settings.Cursor == 0 {
 			settings.Cursor = current.Cursor
 		}
-		if !sameAccountInspectionScanScope(settings, current) {
-			settings.Cursor = 0
-		}
-	}
-	return s.repo.SaveSettings(ctx, settings)
+		*current = settings
+	})
 }
 
 func (s *AccountInspectionService) StartRun(ctx context.Context, resetCursor ...bool) (*AccountInspectionRun, error) {
+	return s.startRun(ctx, len(resetCursor) > 0 && resetCursor[0], false)
+}
+
+func (s *AccountInspectionService) startRun(ctx context.Context, resetCursor, resumeOnly bool) (*AccountInspectionRun, error) {
 	if s == nil || s.repo == nil || s.adminSvc == nil || s.tester == nil {
 		return nil, errors.New("account inspection service is not configured")
 	}
 
+	if err := s.lifetime.Err(); err != nil {
+		return nil, err
+	}
+	claimCtx, cancelClaim := context.WithTimeout(ctx, inspectionDBTimeout)
+	defer cancelClaim()
+	run, err := s.repo.ClaimRun(claimCtx, resetCursor, resumeOnly)
+	if err != nil || run == nil {
+		return nil, err
+	}
+
+	runCtx, cancel := context.WithCancel(s.lifetime)
 	s.mu.Lock()
-	if s.cancel != nil {
+	if s.runningID > run.ID {
+		// This claim expired before the caller resumed after Commit.
 		s.mu.Unlock()
-		return nil, errors.New("account inspection is already running")
+		cancel()
+		return nil, ErrAccountInspectionLeaseLost
 	}
-	s.mu.Unlock()
-
-	settings, err := s.repo.GetSettings(ctx)
-	if err != nil {
-		return nil, err
+	// A previous local worker can still be unwinding after lease expiry.
+	if s.cancel != nil {
+		s.cancel()
 	}
-	settings = NormalizeAccountInspectionSettings(settings)
-	settings.Enabled = true
-	if len(resetCursor) > 0 && resetCursor[0] {
-		latestRun, err := s.repo.GetLatestRun(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if latestRun == nil || latestRun.Status != AccountInspectionRunPaused || !latestRun.HasMore {
-			settings.Cursor = 0
-		}
-	}
-	settings, err = s.repo.SaveSettings(ctx, settings)
-	if err != nil {
-		return nil, err
-	}
-
-	total, err := s.repo.CountCandidates(ctx, settings)
-	if err != nil {
-		return nil, err
-	}
-	run, err := s.repo.CreateRun(ctx, settings, total)
-	if err != nil {
-		return nil, err
-	}
-
-	runCtx, cancel := context.WithCancel(context.Background())
-	s.mu.Lock()
 	s.cancel = cancel
 	s.runningID = run.ID
 	s.mu.Unlock()
 
-	go s.run(runCtx, run)
+	// Keep the queued API snapshot separate from the worker's mutable progress.
+	workerRun := *run
+	go func() {
+		defer func() {
+			cancel()
+			s.mu.Lock()
+			if s.runningID == workerRun.ID {
+				s.cancel = nil
+				s.runningID = 0
+			}
+			s.mu.Unlock()
+		}()
+		s.run(runCtx, &workerRun)
+	}()
 	return run, nil
 }
 
 func (s *AccountInspectionService) StopRun(ctx context.Context) (*AccountInspectionRun, error) {
-	settings, err := s.repo.GetSettings(ctx)
-	if err == nil {
-		settings.Enabled = false
-		_, _ = s.repo.SaveSettings(ctx, settings)
+	stopCtx, cancel := context.WithTimeout(ctx, inspectionDBTimeout)
+	defer cancel()
+	run, err := s.repo.RequestStop(stopCtx)
+	if err != nil || run == nil {
+		return run, err
 	}
 
 	s.mu.Lock()
-	cancel := s.cancel
-	runID := s.runningID
+	if s.runningID == run.ID && s.cancel != nil {
+		s.cancel()
+	}
 	s.mu.Unlock()
 
-	if cancel != nil {
-		cancel()
-	}
-	if runID > 0 {
-		if run, err := s.repo.GetRun(ctx, runID); err == nil && run != nil && run.Status == AccountInspectionRunRunning {
-			run.Status = AccountInspectionRunStopping
-			run.UpdatedAt = time.Now()
-			_ = s.repo.UpdateRun(ctx, run)
-		}
-	}
-	run, err := s.repo.GetLatestRun(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.reconcileOrphanedActiveRun(ctx, run), nil
+	return run, nil
 }
 
-func (s *AccountInspectionService) run(ctx context.Context, run *AccountInspectionRun) {
-	defer func() {
-		s.mu.Lock()
-		if s.runningID == run.ID {
-			s.cancel = nil
-			s.runningID = 0
-		}
-		s.mu.Unlock()
-	}()
+func (s *AccountInspectionService) run(parent context.Context, run *AccountInspectionRun) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	go s.monitorLease(ctx, run.ID, cancel)
 
+	err := s.inspect(ctx, run)
+	if err == nil || errors.Is(err, ErrAccountInspectionLeaseLost) {
+		return
+	}
+	if ctx.Err() == nil && !errors.Is(err, ErrAccountInspectionStopping) {
+		slog.Warn("account_inspection.checkpoint_failed", "run_id", run.ID, "error", err)
+	}
+	// A stop can race any checkpoint, including completion. Acknowledge it
+	// without advancing the cursor or changing the persisted resume intent.
+	finishCtx, finishCancel := context.WithTimeout(context.Background(), inspectionDBTimeout)
+	defer finishCancel()
+	if err := s.finishRun(finishCtx, run, AccountInspectionRunStopped, "", nil); err != nil && !errors.Is(err, ErrAccountInspectionLeaseLost) {
+		slog.Warn("account_inspection.finish_run_failed", "run_id", run.ID, "error", err)
+	}
+}
+
+func (s *AccountInspectionService) monitorLease(ctx context.Context, runID int64, cancel context.CancelFunc) {
+	ticker := time.NewTicker(s.heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pollCtx, stop := context.WithTimeout(ctx, inspectionDBTimeout)
+			err := s.repo.RenewRun(pollCtx, runID)
+			stop()
+			if err != nil {
+				if ctx.Err() == nil && !errors.Is(err, ErrAccountInspectionStopping) && !errors.Is(err, ErrAccountInspectionLeaseLost) {
+					slog.Warn("account_inspection.renew_failed", "run_id", runID, "error", err)
+				}
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func (s *AccountInspectionService) inspect(ctx context.Context, run *AccountInspectionRun) error {
 	run.Status = AccountInspectionRunRunning
 	now := time.Now()
 	run.StartedAt = &now
 	run.UpdatedAt = now
-	if err := s.repo.UpdateRun(ctx, run); err != nil {
-		slog.Warn("account_inspection.mark_run_running_failed", "run_id", run.ID, "error", err)
+	if err := s.saveRun(ctx, run, nil); err != nil {
+		return err
 	}
-	s.log(ctx, run.ID, AccountInspectionLogInfo, fmt.Sprintf("inspection started: batch=%d concurrency=%d sleep=%ds cursor=%d max=%d", run.SettingsSnapshot.BatchLimit, run.SettingsSnapshot.Concurrency, run.SettingsSnapshot.BatchSleepSeconds, run.SettingsSnapshot.Cursor, run.SettingsSnapshot.MaxAccountsPerRun))
-
 	settings := run.SettingsSnapshot
+	s.log(ctx, run.ID, AccountInspectionLogInfo, fmt.Sprintf("inspection started: batch=%d concurrency=%d sleep=%ds cursor=%d max=%d", settings.BatchLimit, settings.Concurrency, settings.BatchSleepSeconds, settings.Cursor, settings.MaxAccountsPerRun))
 	processedThisRun := 0
 	consecutiveInfraErrors := 0
 	for {
-		if ctx.Err() != nil {
-			s.finishRun(context.Background(), run, AccountInspectionRunStopped, "")
-			return
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-
-		if settings.MaxAccountsPerRun > 0 && processedThisRun >= settings.MaxAccountsPerRun {
-			settings.Enabled = false
-			_, _ = s.repo.SaveSettings(context.Background(), settings)
-			s.log(context.Background(), run.ID, AccountInspectionLogWarn, fmt.Sprintf("inspection paused: reached per-run limit %d; click start again to continue from cursor=%d", settings.MaxAccountsPerRun, settings.Cursor))
-			s.finishRun(context.Background(), run, AccountInspectionRunPaused, "per-run account limit reached")
-			return
-		}
-
 		batchSettings := settings
 		if settings.MaxAccountsPerRun > 0 {
 			remaining := settings.MaxAccountsPerRun - processedThisRun
-			if remaining > 0 && remaining < batchSettings.BatchLimit {
+			if remaining < batchSettings.BatchLimit {
 				batchSettings.BatchLimit = remaining
 			}
 		}
 		batch, err := s.repo.ListCandidates(ctx, batchSettings)
 		if err != nil {
-			s.log(context.Background(), run.ID, AccountInspectionLogError, "load accounts failed: "+err.Error())
-			if isAccountInspectionInfraError(err) {
-				settings.Enabled = false
-				_, _ = s.repo.SaveSettings(context.Background(), settings)
-				s.finishRun(context.Background(), run, AccountInspectionRunPaused, err.Error())
-				return
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
-			s.finishRun(context.Background(), run, AccountInspectionRunFailed, err.Error())
-			return
+			s.log(ctx, run.ID, AccountInspectionLogError, "load accounts failed: "+err.Error())
+			status := AccountInspectionRunFailed
+			if isAccountInspectionInfraError(err) {
+				status = AccountInspectionRunPaused
+			}
+			return s.finishRun(ctx, run, status, err.Error(), nil)
 		}
-
 		if run.TotalAccounts <= 0 {
 			run.TotalAccounts = batch.Total
 		}
 		run.Cursor = batch.Cursor
 		run.NextCursor = batch.NextCursor
 		run.HasMore = batch.HasMore
-		_ = s.repo.UpdateRun(ctx, run)
-
 		if len(batch.Items) == 0 {
-			settings.Enabled = false
 			settings.Cursor = 0
-			_, _ = s.repo.SaveSettings(context.Background(), settings)
-			s.log(context.Background(), run.ID, AccountInspectionLogInfo, "no more accounts need inspection; run completed")
-			s.finishRun(context.Background(), run, AccountInspectionRunCompleted, "")
-			return
+			s.log(ctx, run.ID, AccountInspectionLogInfo, "no more accounts need inspection; run completed")
+			return s.finishRun(ctx, run, AccountInspectionRunCompleted, "", &settings.Cursor)
 		}
-
+		if err := s.saveRun(ctx, run, nil); err != nil {
+			return err
+		}
 		s.log(ctx, run.ID, AccountInspectionLogInfo, fmt.Sprintf("loaded batch: accounts=%d cursor=%d", len(batch.Items), settings.Cursor))
 		stats := s.processBatch(ctx, run.ID, settings, batch.Items)
-		processedThisRun += stats.Processed
-		if ctx.Err() != nil {
-			s.finishRun(context.Background(), run, AccountInspectionRunStopped, "")
-			return
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		processedThisRun += stats.Processed
 		if stats.InfraErrors > 0 {
 			consecutiveInfraErrors++
-			s.log(context.Background(), run.ID, AccountInspectionLogWarn, fmt.Sprintf("batch completed with infrastructure errors: %d consecutive_error_batches=%d", stats.InfraErrors, consecutiveInfraErrors))
+			s.log(ctx, run.ID, AccountInspectionLogWarn, fmt.Sprintf("batch completed with infrastructure errors: %d consecutive_error_batches=%d", stats.InfraErrors, consecutiveInfraErrors))
 		} else {
 			consecutiveInfraErrors = 0
 		}
-
 		settings.Cursor = batch.NextCursor
-		settings.Enabled = true
-		if _, err := s.repo.SaveSettings(context.Background(), settings); err != nil {
-			slog.Warn("account_inspection.save_cursor_failed", "run_id", run.ID, "cursor", settings.Cursor, "error", err)
-		}
-		run.NextCursor = batch.NextCursor
-		run.HasMore = batch.HasMore
-		_ = s.repo.UpdateRun(context.Background(), run)
-		_ = s.repo.Prune(context.Background(), defaultAccountInspectionLogRetention, defaultAccountInspectionResultRetention)
-
+		_ = s.repo.Prune(ctx, defaultAccountInspectionLogRetention, defaultAccountInspectionResultRetention)
 		if settings.AutoPauseConsecutiveErrors > 0 && consecutiveInfraErrors >= settings.AutoPauseConsecutiveErrors {
-			settings.Enabled = false
-			_, _ = s.repo.SaveSettings(context.Background(), settings)
-			s.log(context.Background(), run.ID, AccountInspectionLogError, fmt.Sprintf("inspection paused: %d consecutive batches had database/redis style errors; cursor=%d", consecutiveInfraErrors, settings.Cursor))
-			s.finishRun(context.Background(), run, AccountInspectionRunPaused, "paused by infrastructure error protection")
-			return
+			return s.finishRun(ctx, run, AccountInspectionRunPaused, "paused by infrastructure error protection", &settings.Cursor)
 		}
-
 		if !batch.HasMore {
-			settings.Enabled = false
 			settings.Cursor = 0
-			_, _ = s.repo.SaveSettings(context.Background(), settings)
-			s.log(context.Background(), run.ID, AccountInspectionLogInfo, "current filter scope has been fully inspected")
-			s.finishRun(context.Background(), run, AccountInspectionRunCompleted, "")
-			return
+			s.log(ctx, run.ID, AccountInspectionLogInfo, "current filter scope has been fully inspected")
+			return s.finishRun(ctx, run, AccountInspectionRunCompleted, "", &settings.Cursor)
 		}
-
+		if settings.MaxAccountsPerRun > 0 && processedThisRun >= settings.MaxAccountsPerRun {
+			s.log(ctx, run.ID, AccountInspectionLogWarn, fmt.Sprintf("inspection paused: reached per-run limit %d; click start again to continue from cursor=%d", settings.MaxAccountsPerRun, settings.Cursor))
+			return s.finishRun(ctx, run, AccountInspectionRunPaused, "per-run account limit reached", &settings.Cursor)
+		}
+		if err := s.saveRun(ctx, run, &settings.Cursor); err != nil {
+			return err
+		}
 		if !sleepAccountInspectionWithContext(ctx, time.Duration(settings.BatchSleepSeconds)*time.Second) {
-			s.finishRun(context.Background(), run, AccountInspectionRunStopped, "")
-			return
+			return ctx.Err()
 		}
 	}
 }
@@ -565,6 +565,10 @@ accountLoop:
 		}
 		select {
 		case sem <- struct{}{}:
+			if ctx.Err() != nil {
+				<-sem
+				break accountLoop
+			}
 		case <-ctx.Done():
 			break accountLoop
 		}
@@ -590,6 +594,9 @@ accountLoop:
 }
 
 func (s *AccountInspectionService) processCandidate(ctx context.Context, runID int64, settings AccountInspectionSettings, candidate AccountInspectionCandidate) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	s.log(ctx, runID, AccountInspectionLogInfo, fmt.Sprintf("testing account: %s (%d)", candidate.Name, candidate.AccountID))
 	started := time.Now()
 
@@ -634,8 +641,22 @@ func (s *AccountInspectionService) processCandidate(ctx context.Context, runID i
 	result.Action = action
 	skipStateUpdate := false
 	infraError := false
+	disableQuota := shouldDisableQuotaAccountDuringInspection(settings, result, candidate, action)
+	recoverAccount := status == AccountHealthStatusAvailable && s.rateLimitSvc != nil
+	effectCtx := ctx
+	if actionRequiresAccountInspectionApply(action) || disableQuota || recoverAccount {
+		// The probe may have outlived its claim. Renew before any account
+		// mutation and give those calls a deadline shorter than the new lease.
+		var stop context.CancelFunc
+		effectCtx, stop = context.WithTimeout(ctx, inspectionDBTimeout)
+		defer stop()
+		if err := s.repo.RenewRun(effectCtx, runID); err != nil {
+			slog.Warn("account_inspection.account_action_lease_failed", "run_id", runID, "account_id", candidate.AccountID, "error", err)
+			return true
+		}
+	}
 	if actionRequiresAccountInspectionApply(action) {
-		if actionErr := s.applyAction(ctx, action, candidate, result); actionErr != nil {
+		if actionErr := s.applyAction(effectCtx, action, candidate, result); actionErr != nil {
 			result.ActionError = actionErr.Error()
 			if isAccountInspectionInfraError(actionErr) {
 				infraError = true
@@ -662,8 +683,8 @@ func (s *AccountInspectionService) processCandidate(ctx context.Context, runID i
 		s.log(ctx, runID, AccountInspectionLogInfo, fmt.Sprintf("action queued: %s (%d) action=%s", candidate.Name, candidate.AccountID, action))
 	}
 
-	if shouldDisableQuotaAccountDuringInspection(settings, result, candidate, action) {
-		if actionErr := s.applyAction(ctx, AccountInspectionActionDisable, candidate, result); actionErr != nil {
+	if disableQuota {
+		if actionErr := s.applyAction(effectCtx, AccountInspectionActionDisable, candidate, result); actionErr != nil {
 			result.ActionError = actionErr.Error()
 			if isAccountInspectionInfraError(actionErr) {
 				infraError = true
@@ -677,16 +698,20 @@ func (s *AccountInspectionService) processCandidate(ctx context.Context, runID i
 		}
 	}
 
-	if status == AccountHealthStatusAvailable && s.rateLimitSvc != nil {
-		_, _ = s.rateLimitSvc.RecoverAccountAfterSuccessfulTest(ctx, candidate.AccountID)
+	if recoverAccount {
+		_, _ = s.rateLimitSvc.RecoverAccountAfterSuccessfulTest(effectCtx, candidate.AccountID)
 	}
 
-	if err := s.repo.SaveResult(context.Background(), result); err != nil {
+	// A stop can arrive after an account mutation. Record its outcome while
+	// the claim is still live, even if the worker's context was canceled.
+	writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), inspectionDBTimeout)
+	defer cancelWrite()
+	if err := s.repo.SaveResult(writeCtx, result); err != nil {
 		infraError = true
 		slog.Warn("account_inspection.save_result_failed", "run_id", runID, "account_id", candidate.AccountID, "error", err)
 	}
 	if !skipStateUpdate {
-		if err := s.repo.UpdateState(context.Background(), result, statePatch); err != nil {
+		if err := s.repo.UpdateState(writeCtx, result, statePatch); err != nil {
 			infraError = true
 			slog.Warn("account_inspection.update_state_failed", "run_id", runID, "account_id", candidate.AccountID, "error", err)
 		}
@@ -709,38 +734,19 @@ func (s *AccountInspectionService) applyAction(ctx context.Context, action strin
 	}
 }
 
-func (s *AccountInspectionService) finishRun(ctx context.Context, run *AccountInspectionRun, status, errMsg string) {
+func (s *AccountInspectionService) finishRun(ctx context.Context, run *AccountInspectionRun, status, errMsg string, cursor *int64) error {
 	now := time.Now()
 	run.Status = status
 	run.Error = errMsg
 	run.FinishedAt = &now
 	run.UpdatedAt = now
-	if err := s.repo.UpdateRun(ctx, run); err != nil {
-		slog.Warn("account_inspection.finish_run_failed", "run_id", run.ID, "error", err)
-	}
+	return s.saveRun(ctx, run, cursor)
 }
 
-func (s *AccountInspectionService) reconcileOrphanedActiveRun(ctx context.Context, run *AccountInspectionRun) *AccountInspectionRun {
-	if s == nil || s.repo == nil || run == nil || !isAccountInspectionActiveStatus(run.Status) {
-		return run
-	}
-
-	s.mu.Lock()
-	isCurrentRun := s.runningID == run.ID && s.cancel != nil
-	s.mu.Unlock()
-	if isCurrentRun {
-		return run
-	}
-
-	now := time.Now()
-	run.Status = AccountInspectionRunStopped
-	run.Error = "stopped because no active inspection worker was found"
-	run.FinishedAt = &now
-	run.UpdatedAt = now
-	if err := s.repo.UpdateRun(ctx, run); err != nil {
-		slog.Warn("account_inspection.reconcile_orphaned_run_failed", "run_id", run.ID, "error", err)
-	}
-	return run
+func (s *AccountInspectionService) saveRun(ctx context.Context, run *AccountInspectionRun, cursor *int64) error {
+	writeCtx, cancel := context.WithTimeout(ctx, inspectionDBTimeout)
+	defer cancel()
+	return s.repo.SaveRun(writeCtx, run, cursor)
 }
 
 func (s *AccountInspectionService) log(ctx context.Context, runID int64, level, message string) {
@@ -842,7 +848,7 @@ func NormalizeAccountInspectionSettings(settings AccountInspectionSettings) Acco
 	return settings
 }
 
-func sameAccountInspectionScanScope(a, b AccountInspectionSettings) bool {
+func SameAccountInspectionScanScope(a, b AccountInspectionSettings) bool {
 	a = NormalizeAccountInspectionSettings(a)
 	b = NormalizeAccountInspectionSettings(b)
 	return a.Filters == b.Filters &&

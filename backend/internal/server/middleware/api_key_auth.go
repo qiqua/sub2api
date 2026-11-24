@@ -37,6 +37,17 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 // usage 允许过期/配额耗尽的 Key 查询自身用量，billing 用于读取当前 Key 的倍率配置，
 // 异步生图查询允许已耗尽额度的 Key 拉取自身任务结果。
 func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
+	return apiKeyAuthWithLookup(apiKeyService, subscriptionService, cfg, apiKeyService.GetByKey, subscriptionService.GetActiveSubscription)
+}
+
+// NewAPIKeyReentryAuth applies the same gates as ingress, using a fresh key lookup.
+func NewAPIKeyReentryAuth(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
+	return apiKeyAuthWithLookup(apiKeyService, subscriptionService, cfg, apiKeyService.GetByKeyForReentry, subscriptionService.GetActiveSubscriptionForReentry)
+}
+
+func apiKeyAuthWithLookup(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config,
+	lookup func(context.Context, string) (*service.APIKey, error), lookupSubscription func(context.Context, int64, int64) (*service.UserSubscription, error),
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// ── 1. 提取 API Key ──────────────────────────────────────────
 		if rejectInvalidAuthAbuse(c, apiKeyService) {
@@ -102,7 +113,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// ── 2. 验证 Key 存在 ─────────────────────────────────────────
 
-		apiKey, err := apiKeyService.GetByKey(c.Request.Context(), apiKeyString)
+		apiKey, err := lookup(c.Request.Context(), apiKeyString)
 		if err != nil {
 			if errors.Is(err, service.ErrAPIKeyNotFound) {
 				recordInvalidAuthFailure(c, apiKeyService)
@@ -205,7 +216,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// 倍率自省不需要订阅数据；/v1/usage 仍保留原有订阅读取行为。
 		if isSubscriptionType && subscriptionService != nil && !billingInfoRequest {
-			sub, subErr := subscriptionService.GetActiveSubscription(
+			sub, subErr := lookupSubscription(
 				c.Request.Context(),
 				apiKey.User.ID,
 				apiKey.Group.ID,
@@ -270,7 +281,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				}
 			} else {
 				// 非订阅模式 或 订阅模式但 subscriptionService 未注入：回退到余额检查
-				if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
+				if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) && !isOwnedBatchResultRead(c) {
 					AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
 					return
 				}
@@ -348,6 +359,21 @@ func isAsyncImageTaskRead(method, path string) bool {
 		return false
 	}
 	return strings.HasPrefix(path, "/v1/images/tasks/") || strings.HasPrefix(path, "/images/tasks/")
+}
+
+// A hold can spend the owner's last available cent. Only these registered GET
+// handlers read an existing user's and key's batches; keep every other auth check.
+func isOwnedBatchResultRead(c *gin.Context) bool {
+	if c.Request.Method != http.MethodGet {
+		return false
+	}
+	switch c.FullPath() {
+	case "/v1/images/batches", "/v1/images/batches/:id", "/v1/images/batches/:id/items",
+		"/v1/images/batches/:id/items/:custom_id/content", "/v1/images/batches/:id/download",
+		"/v1/images/batches/by-idempotency-key":
+		return true
+	}
+	return false
 }
 
 // GetAPIKeyFromContext 从上下文中获取API key

@@ -202,7 +202,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
-	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel)
+	primaryKey := apiKey
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel, service.WithAPIKeyAutoRouteGeminiImageRequest(nil, clientRequestedModel(c, reqModel), reqModel))
+	if apiKey == nil {
+		return
+	}
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -1049,6 +1053,19 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							return
 						}
 						fallbackAPIKey := cloneAPIKeyWithGroup(apiKey, fallbackGroup)
+						if service.NormalizeAPIKeyRoutingMode(primaryKey.RoutingMode) == service.APIKeyRoutingModeAuto {
+							// A group configured as a gateway fallback must still be a permitted route for this key.
+							ctx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, "")
+							c.Request = c.Request.WithContext(ctx)
+							fallbackAPIKey, err = resolveAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, primaryKey, reqModel,
+								service.WithAPIKeyAutoRoutePinnedGroup(fallbackGroup.ID), service.WithAPIKeyAutoRouteGeminiImageRequest(nil, clientRequestedModel(c, reqModel), reqModel))
+							if err != nil || fallbackAPIKey.Group.IsSubscriptionType() {
+								_ = h.antigravityGatewayService.WriteMappedClaudeError(c, account, promptTooLongErr.StatusCode, promptTooLongErr.RequestID, promptTooLongErr.Body)
+								return
+							}
+							fallbackGroup = fallbackAPIKey.Group
+							parsedReq.GroupID = fallbackAPIKey.GroupID
+						}
 						if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
 							status, code, message, retryAfter := billingErrorDetails(err)
 							if retryAfter > 0 {
@@ -1056,6 +1073,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							}
 							h.handleStreamingAwareError(c, status, code, message, streamStarted)
 							return
+						}
+						if currentSubscription != nil && service.NormalizeAPIKeyRoutingMode(primaryKey.RoutingMode) == service.APIKeyRoutingModeAuto {
+							done, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, fallbackAPIKey, nil, tokenInflightEstimate(reqModel, body))
+							if err != nil {
+								status, code, message, _ := billingErrorDetails(err)
+								h.handleStreamingAwareError(c, status, code, message, streamStarted)
+								return
+							}
+							defer done()
 						}
 						// 兜底重试按"直接请求兜底分组"处理：清除强制平台，允许按分组平台调度
 						ctx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, "")
@@ -2248,6 +2274,9 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	}
 
 	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, parsedReq.Model)
+	if apiKey == nil {
+		return
+	}
 
 	setOpsRequestContext(c, parsedReq.Model, parsedReq.Stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(parsedReq.Stream, false)))

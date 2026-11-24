@@ -682,9 +682,20 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		return nil, err
 	}
 
+	wasMultipartEdit := endpoint == GrokMediaEndpointImagesEdits && strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "multipart/form-data")
 	body, contentType, err = prepareGrokMediaForwardBody(endpoint, body, contentType)
 	if err != nil {
 		return nil, err
+	}
+	// Composite routing leaves multipart uploads intact. Apply the selected
+	// upstream model once the edit has been converted to a JSON payload.
+	if wasMultipartEdit {
+		if resolved, ok := ResolvedUpstreamModelFromContext(ctx); ok {
+			body, err = sjson.SetBytes(body, "model", resolved)
+			if err != nil {
+				return nil, fmt.Errorf("rewrite composite Grok image model: %w", err)
+			}
+		}
 	}
 	body, contentType, err = normalizeGrokMediaForwardBody(endpoint, body, contentType)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -31,6 +32,7 @@ const (
 	maxBatchImageReferenceImageBytes    = 10 * 1024 * 1024
 	defaultBatchImageMaxReferenceImages = 1000
 	defaultBatchImageMaxReferenceBytes  = 128 * 1024 * 1024
+	maxBatchIdempotencyKeyChars         = 255
 )
 
 type BatchImageAccountSelectionRepository interface {
@@ -213,18 +215,12 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 	requestHash := HashBatchImageSubmitRequest(normalized)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	if idempotencyKey != "" {
+		if utf8.RuneCountInString(idempotencyKey) > maxBatchIdempotencyKeyChars {
+			return nil, ErrBatchImageInvalidIdempotencyKey
+		}
 		existing, err := s.Repo.GetBatchImageJobByIdempotencyKey(ctx, owner.UserID, owner.APIKeyID, idempotencyKey)
 		if err == nil {
-			if batchImageDerefString(existing.RequestHash) != requestHash {
-				return nil, ErrBatchImageIdempotencyConflict
-			}
-			if existing.Status == BatchImageJobStatusSubmitted && s.Queue != nil {
-				if enqueueErr := s.Queue.Enqueue(ctx, existing.BatchID); enqueueErr != nil && !errors.Is(enqueueErr, ErrBatchImageAlreadyQueued) {
-					_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, existing.BatchID, "QUEUE_FAILED", sanitizeBatchImagePublicMessage(enqueueErr.Error()), false)
-					return nil, ErrBatchImageQueueFailed
-				}
-			}
-			return BatchImageJobToPublic(existing), nil
+			return s.replayBatchSubmit(ctx, existing, requestHash)
 		}
 		if !errors.Is(err, ErrBatchImageJobNotFound) {
 			return nil, err
@@ -285,6 +281,16 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 		SessionID:               normalized.SessionID,
 	})
 	if err != nil {
+		// A concurrent retry can win the scoped insert after the initial lookup.
+		if idempotencyKey != "" && errors.Is(err, ErrBatchImageJobExists) {
+			existing, lookupErr := s.Repo.GetBatchImageJobByIdempotencyKey(ctx, owner.UserID, owner.APIKeyID, idempotencyKey)
+			if lookupErr == nil {
+				return s.replayBatchSubmit(ctx, existing, requestHash)
+			}
+			if !errors.Is(lookupErr, ErrBatchImageJobNotFound) {
+				return nil, lookupErr
+			}
+		}
 		return nil, err
 	}
 	if err := reserveBatchImageBalanceHold(ctx, s.BillingRepo, job, requestHash); err != nil {
@@ -399,6 +405,22 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 		return nil, err
 	}
 	return BatchImageJobToPublic(created), nil
+}
+
+func (s *BatchImagePublicService) replayBatchSubmit(ctx context.Context, job *BatchImageJob, requestHash string) (*BatchImagePublicBatch, error) {
+	if batchImageDerefString(job.RequestHash) != requestHash {
+		return nil, ErrBatchImageIdempotencyConflict
+	}
+	if job.UserDeletedAt != nil {
+		return nil, ErrBatchImageSubmissionRemoved
+	}
+	if job.Status == BatchImageJobStatusSubmitted && s.Queue != nil {
+		if err := s.Queue.Enqueue(ctx, job.BatchID); err != nil && !errors.Is(err, ErrBatchImageAlreadyQueued) {
+			_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, "QUEUE_FAILED", sanitizeBatchImagePublicMessage(err.Error()), false)
+			return nil, ErrBatchImageQueueFailed
+		}
+	}
+	return BatchImageJobToPublic(job), nil
 }
 
 func (s *BatchImagePublicService) releaseFailedSubmitHold(ctx context.Context, job *BatchImageJob, requestHash string) error {
@@ -536,6 +558,22 @@ func (s *BatchImagePublicService) Get(ctx context.Context, owner BatchImageOwner
 	job, err := s.Repo.GetBatchImageJobByBatchIDForOwner(ctx, owner.UserID, owner.APIKeyID, batchID)
 	if err != nil {
 		return nil, err
+	}
+	return BatchImageJobToPublic(job), nil
+}
+
+// GetByIdempotencyKey reconciles a lost submit acknowledgement without holding funds or starting work.
+func (s *BatchImagePublicService) GetByIdempotencyKey(ctx context.Context, owner BatchImageOwner, key string) (*BatchImagePublicBatch, error) {
+	key = strings.TrimSpace(key)
+	if key == "" || utf8.RuneCountInString(key) > maxBatchIdempotencyKeyChars {
+		return nil, ErrBatchImageInvalidIdempotencyKey
+	}
+	job, err := s.Repo.GetBatchImageJobByIdempotencyKey(ctx, owner.UserID, owner.APIKeyID, key)
+	if err != nil {
+		return nil, err
+	}
+	if job.UserDeletedAt != nil {
+		return nil, ErrBatchImageSubmissionRemoved
 	}
 	return BatchImageJobToPublic(job), nil
 }

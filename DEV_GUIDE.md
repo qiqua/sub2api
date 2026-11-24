@@ -314,6 +314,8 @@ golangci-lint run ./...
 
 在 GitHub Actions 的 `Custom Docker Image` 成功发布 `ghcr.io/qiqua/sub2api:custom-main` 后，使用服务器上已有的 Compose 配置更新应用容器：
 
+首次升级到含账号巡检迁移 `253_account_inspection_run_lease.sql` 的版本时，先在管理端停止正在执行的巡检，等状态变为「已停止」。多实例部署需等所有实例升级完成后再启动巡检，旧版本工作进程不识别数据库租约。
+
 ```bash
 cd /opt/sub2api &&
 docker compose pull sub2api &&

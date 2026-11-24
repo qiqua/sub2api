@@ -47,18 +47,20 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		googleError(c, http.StatusBadRequest, "API key group platform is not gemini")
 		return
 	}
-	if !hasForcePlatform {
-		apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, "")
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, "")
+	if apiKey == nil {
+		return
 	}
+	primaryAllowlist := autoRoutePrimaryModelAllowlist(c)
 
 	// 分组级模型白名单开启时过滤 models[].name（名字形如 models/xxx）。
 	filterGeminiModels := func(models []gemini.Model) []gemini.Model {
-		if apiKey.Group == nil || !apiKey.Group.ModelAllowlistEnabled() {
+		if !primaryAllowlist.Enabled && !apiKey.Group.ModelAllowlistEnabled() {
 			return models
 		}
 		filtered := make([]gemini.Model, 0, len(models))
 		for _, model := range models {
-			if apiKey.Group.ModelAllowlist.Allows(model.Name) {
+			if primaryAllowlist.Allows(model.Name) && (apiKey.Group == nil || apiKey.Group.ModelAllowlist.Allows(model.Name)) {
 				filtered = append(filtered, model)
 			}
 		}
@@ -90,6 +92,7 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 			ids = apiKey.Group.ModelAllowlist.FilterForListing(ids)
 		}
+		ids = primaryAllowlist.FilterForListing(ids)
 		declaredModels := make([]gemini.Model, 0, len(ids))
 		for _, id := range ids {
 			declaredModels = append(declaredModels, gemini.FallbackModel(id))
@@ -128,6 +131,16 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		if filtered, dropped, ok := filterUpstreamGeminiModelsBody(res.Body, apiKey.Group.ModelAllowlist); ok && dropped {
 			// 只在确有条目被过滤时替换响应体；全命中或解析失败时保持原始响应，
 			// 统一经 writeUpstreamResponse 写出（保留全部上游响应头）。
+			res.Body = filtered
+		}
+	}
+	if primaryAllowlist.Enabled {
+		filtered, _, ok := filterUpstreamGeminiModelsBody(res.Body, primaryAllowlist)
+		if !ok && res.StatusCode == http.StatusOK {
+			googleError(c, http.StatusBadGateway, "Invalid upstream models response")
+			return
+		}
+		if ok {
 			res.Body = filtered
 		}
 	}
@@ -270,8 +283,9 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	if resolvedModel, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context()); ok && strings.TrimSpace(resolvedModel) != "" {
 		modelName = strings.TrimSpace(resolvedModel)
 	}
-	if !hasForcePlatform {
-		apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, modelName)
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, modelName, service.WithAPIKeyAutoRoutePublicModels(c.Param("model")))
+	if apiKey == nil {
+		return
 	}
 	// 自动路由后若仍是 composite 分组且目标平台为 antigravity，
 	// 仅允许原生 Gemini 模型，与上游 /v1beta 路由校验保持一致。
@@ -378,9 +392,6 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	stream := action == "streamGenerateContent"
 	reqLog = reqLog.With(zap.String("model", modelName), zap.String("action", action), zap.Bool("stream", stream))
-	if !middleware.HasForcePlatform(c) {
-		apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, modelName)
-	}
 
 	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
@@ -393,6 +404,16 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	}
 	if len(body) == 0 {
 		googleError(c, http.StatusBadRequest, "Request body is empty")
+		return
+	}
+
+	var routeOptions []service.APIKeyAutoRouteOption
+	if action != "countTokens" {
+		routeOptions = append(routeOptions, service.WithAPIKeyAutoRouteGeminiImageRequest(body, urlModel, modelName))
+	}
+	routeOptions = append(routeOptions, service.WithAPIKeyAutoRoutePublicModels(urlModel))
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, modelName, routeOptions...)
+	if apiKey == nil {
 		return
 	}
 

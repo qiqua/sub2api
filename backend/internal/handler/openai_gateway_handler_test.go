@@ -916,6 +916,30 @@ func TestOpenAIResponses_RejectsMessageIDAsPreviousResponseID(t *testing.T) {
 	require.Contains(t, w.Body.String(), "previous_response_id must be a response.id")
 }
 
+func TestOpenAIAutoRoute_UnverifiedRouteStopsBeforeScheduling(t *testing.T) {
+	for _, path := range []string{"/v1/responses", "/v1/messages"} {
+		t.Run(path, func(t *testing.T) {
+			c, w := newTypeSafeGroupContext(t, path, `{"model":"gpt-5.1","stream":false}`, service.PlatformOpenAI)
+			key := mustAPIKey(t, c)
+			key.RoutingMode = service.APIKeyRoutingModeAuto
+			key.Group.AllowMessagesDispatch = true
+			h := newOpenAIHandlerForPreviousResponseIDValidation(t, &concurrencyCacheMock{
+				acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
+					t.Error("attempted scheduling after route denial")
+					return false, nil
+				},
+			})
+			if path == "/v1/messages" {
+				h.Messages(c)
+			} else {
+				h.Responses(c)
+			}
+			require.Equal(t, http.StatusServiceUnavailable, w.Code)
+			require.True(t, c.IsAborted())
+		})
+	}
+}
+
 func TestOpenAIResponses_AcceptsHTTPContinuationPreviousResponseIDBeforeRouting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1953,6 +1977,7 @@ type openAIResponsesWSUsageLogCase struct {
 	// apiKeyCredential 取得，并把其分组放入请求 ctx；handler 也使用它。
 	apiKeyService    *service.APIKeyService
 	apiKeyCredential string
+	apiKeyAutoRouter *service.APIKeyAutoRouter
 	// accountRateMultiplier 覆盖账号倍率（利润门测试用）。
 	accountRateMultiplier *float64
 	// firstFrameCloseExpected：首帧即被拒（连接被 1008 关闭），不期待任何响应帧。
@@ -3144,6 +3169,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		gatewayService:      gatewaySvc,
 		billingCacheService: billingCacheSvc,
 		apiKeyService:       &service.APIKeyService{},
+		apiKeyAutoRouter:    tc.apiKeyAutoRouter,
 		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 	}
 

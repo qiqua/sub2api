@@ -225,6 +225,14 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_TurnRetryForcesF
 		},
 	}
 
+	var retryAdmissions atomic.Int32
+	hooks := &OpenAIWSIngressHooks{BeforeRetry: func(turn int) error {
+		if turn != 1 {
+			return errors.New("expected first-turn retry")
+		}
+		retryAdmissions.Add(1)
+		return nil
+	}}
 	serverErrCh := make(chan error, 2)
 	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{
@@ -257,7 +265,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_TurnRetryForcesF
 			return
 		}
 
-		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "sk-test", firstMessage, nil)
+		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "sk-test", firstMessage, hooks)
 	}))
 	defer wsServer.Close()
 
@@ -312,6 +320,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_TurnRetryForcesF
 
 	runSingleTurnSession("resp_retry_fresh")
 
+	require.EqualValues(t, 1, retryAdmissions.Load(), "recheck route access before replaying the failed turn")
 	require.Equal(t, 2, dialer.DialCount(), "首读失败后的重试应新建连接")
 	fresh.mu.Lock()
 	freshWrites := len(fresh.writes)

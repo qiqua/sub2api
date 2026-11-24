@@ -739,6 +739,21 @@ func (s *SubscriptionService) GetByID(ctx context.Context, id int64) (*UserSubsc
 	return s.userSubRepo.GetByID(ctx, id)
 }
 
+// GetActiveSubscriptionForReentry reads the current grant before detached work starts.
+func (s *SubscriptionService) GetActiveSubscriptionForReentry(ctx context.Context, userID, groupID int64) (*UserSubscription, error) {
+	if s == nil || s.userSubRepo == nil {
+		return nil, ErrSubscriptionNotFound
+	}
+	sub, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, userID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if !validAutoRouteSubscription(sub, userID, groupID) {
+		return nil, ErrSubscriptionNotFound
+	}
+	return sub, nil
+}
+
 // GetActiveSubscription 获取用户对特定分组的有效订阅
 // 使用 L1 缓存 + singleflight 加速中间件热路径。
 // 返回缓存对象的浅拷贝，调用方可安全修改字段而不会污染缓存或触发 data race。

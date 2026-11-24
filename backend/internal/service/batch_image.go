@@ -78,6 +78,8 @@ var (
 	ErrBatchImageProviderSubmitFailed       = infraerrors.New(http.StatusBadGateway, "BATCH_IMAGE_PROVIDER_SUBMIT_FAILED", "batch image provider submit failed")
 	ErrBatchImageQueueFailed                = infraerrors.New(http.StatusBadGateway, "BATCH_IMAGE_QUEUE_FAILED", "batch image queue failed")
 	ErrBatchImageIdempotencyConflict        = infraerrors.New(http.StatusConflict, "BATCH_IMAGE_IDEMPOTENCY_CONFLICT", "idempotency key reused with different batch image request")
+	ErrBatchImageInvalidIdempotencyKey      = infraerrors.New(http.StatusBadRequest, "BATCH_IMAGE_INVALID_IDEMPOTENCY_KEY", "a valid Idempotency-Key header is required")
+	ErrBatchImageSubmissionRemoved          = infraerrors.New(http.StatusGone, "BATCH_IMAGE_SUBMISSION_REMOVED", "this batch image submission is no longer available")
 	ErrBatchImageCancelFailed               = infraerrors.New(http.StatusBadGateway, "BATCH_IMAGE_CANCEL_FAILED", "batch image cancel failed")
 	ErrBatchImageVertexGCSBucketMissing     = infraerrors.New(http.StatusBadGateway, "BATCH_IMAGE_VERTEX_GCS_BUCKET_MISSING", "Vertex managed GCS bucket is not configured")
 

@@ -12,6 +12,16 @@ export interface CanvasJob {
   keyId: number
 }
 
+// Only the numeric key ID belongs in local storage. The Blob captures the reference at submission.
+export interface CanvasSubmitIntent {
+  readonly requestId: string
+  readonly keyId: number
+  readonly prompt: string
+  readonly model: string
+  readonly aspectRatio: '1:1' | '3:2' | '2:3'
+  readonly reference?: Blob
+}
+
 export interface CanvasNode extends Point {
   id: string
   kind: 'prompt' | 'image'
@@ -19,15 +29,30 @@ export interface CanvasNode extends Point {
   parentId?: string
   image?: Blob
   model?: string
+  intent?: CanvasSubmitIntent
   job?: CanvasJob
   error?: string
 }
 
 export interface CanvasBoard {
   id: string
+  version?: number
   name: string
   nodes: CanvasNode[]
   viewport: Viewport
+}
+
+export function boardImageBytes(nodes: readonly CanvasNode[]): number {
+  let total = 0
+  const references = new Set<Blob>()
+  for (const node of nodes) if (node.intent?.reference) references.add(node.intent.reference)
+  for (const node of nodes) {
+    if (!node.image) continue
+    total += node.image.size
+    references.delete(node.image)
+  }
+  for (const reference of references) total += reference.size
+  return total
 }
 
 export const IMAGE_TYPES: readonly string[] = ['image/png', 'image/jpeg', 'image/webp']

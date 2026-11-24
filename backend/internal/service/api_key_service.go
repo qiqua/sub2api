@@ -488,13 +488,8 @@ func (s *APIKeyService) incrementAPIKeyErrorCount(ctx context.Context, userID in
 // 对于订阅类型分组：检查用户是否有有效订阅
 // 对于标准类型分组：使用原有的 AllowedGroups 和 IsExclusive 逻辑
 func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group *Group) bool {
-	// 订阅类型分组：需要有效订阅
-	if group.IsSubscriptionType() {
-		_, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, user.ID, group.ID)
-		return err == nil // 有有效订阅则允许
-	}
-	// 标准类型分组：使用原有逻辑
-	return user.CanBindGroup(group.ID, group.IsExclusive)
+	_, err := apiKeyGroupBindGrant(ctx, user, group, s.userSubRepo)
+	return err == nil
 }
 
 // Create 创建API Key
@@ -744,6 +739,24 @@ func (s *APIKeyService) GetByID(ctx context.Context, id int64) (*APIKey, error) 
 	if apiKey != nil {
 		apiKey.CurrentConcurrency = s.currentConcurrencyForAPIKey(ctx, apiKey.ID)
 	}
+	return apiKey, nil
+}
+
+// GetByKeyForReentry reloads the credential and its authorization edges for work
+// that starts after the original request has returned.
+func (s *APIKeyService) GetByKeyForReentry(ctx context.Context, key string) (*APIKey, error) {
+	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes || !utf8.ValidString(key) {
+		return nil, ErrAPIKeyNotFound
+	}
+	apiKey, err := s.lookupAPIKeyForAuth(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey == nil {
+		return nil, ErrAPIKeyNotFound
+	}
+	apiKey.Key = key
+	s.compileAPIKeyIPRules(apiKey)
 	return apiKey, nil
 }
 

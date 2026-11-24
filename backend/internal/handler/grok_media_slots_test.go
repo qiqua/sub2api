@@ -198,6 +198,27 @@ func (p grokMediaSlotProber) ProbeMediaEligibility(ctx context.Context, id int64
 	return p(ctx, id)
 }
 
+type grokMediaTaskKeyRepo struct {
+	service.APIKeyRepository
+	load func() *service.APIKey
+}
+
+func (r grokMediaTaskKeyRepo) GetByKeyForAuth(_ context.Context, credential string) (*service.APIKey, error) {
+	if credential != "test-key" {
+		return nil, service.ErrAPIKeyNotFound
+	}
+	return r.load(), nil
+}
+
+func (grokMediaTaskKeyRepo) UpdateLastUsed(context.Context, int64, time.Time) error { return nil }
+
+func grokMediaTaskKey() *service.APIKey {
+	gid := int64(24)
+	return &service.APIKey{ID: 20, UserID: 10, GroupID: &gid, Status: service.StatusActive,
+		User:  &service.User{ID: 10, Status: service.StatusActive, Concurrency: 5},
+		Group: &service.Group{ID: gid, Status: service.StatusActive, Platform: service.PlatformGrok, AllowImageGeneration: true, Hydrated: true}}
+}
+
 func newGrokMediaSlotHandler(t *testing.T, oauth, mismatch bool, platforms ...string) (*OpenAIGatewayHandler, *grokMediaSlotsCache, *grokMediaSlotBindings, *grokMediaSlotUpstream) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -240,7 +261,8 @@ func newGrokMediaSlotHandler(t *testing.T, oauth, mismatch bool, platforms ...st
 	bindings.writes = 0
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
-	handler := NewOpenAIGatewayHandler(gateway, concurrency, billing, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
+	keys := service.NewAPIKeyService(grokMediaTaskKeyRepo{load: grokMediaTaskKey}, nil, nil, nil, nil, nil, cfg)
+	handler := NewOpenAIGatewayHandler(gateway, concurrency, billing, keys, nil, nil, nil, nil, cfg)
 	return handler, slots, bindings, upstream
 }
 

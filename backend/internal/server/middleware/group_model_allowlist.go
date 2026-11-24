@@ -12,13 +12,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const autoRoutePublicModelsKey = "api_key_auto_route_public_models"
+
+// AutoRoutePublicModels returns the client model names captured before composite routing rewrites the request.
+func AutoRoutePublicModels(c *gin.Context) []string {
+	value, _ := c.Get(autoRoutePublicModelsKey)
+	models, _ := value.([]string)
+	return models
+}
+
 // GroupModelAllowlist 是分组级模型白名单准入中间件。
 //
 // 挂载位置：每条网关链的 apiKeyAuth 之后、compositeTarget 之前——
 // 保证校验发生在合成路由改写与调度之前，且只看客户端书写的公开模型名。
 //
 // 行为：
-//   - 快速路径：未绑定分组或白名单未开启时直接放行，不读请求体。
+//   - 快速路径：固定分组未开启白名单时直接放行，不读请求体。
 //   - Responses WebSocket 入口跳过（首帧与后续 turn 由 ResponsesWebSocket 逐帧
 //     校验）；Grok Realtime 的升级请求模型固定在查询参数里，仍走中间件校验，
 //     其他路由伪造 Upgrade 头不得绕过校验。
@@ -31,15 +40,19 @@ import (
 func GroupModelAllowlist() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey, ok := GetAPIKeyFromContext(c)
-		if !ok || apiKey == nil || apiKey.Group == nil || !apiKey.Group.ModelAllowlistEnabled() {
+		if !ok || apiKey == nil || apiKey.Group == nil || c.Request == nil {
+			c.Next()
+			return
+		}
+		auto := service.NormalizeAPIKeyRoutingMode(apiKey.RoutingMode) == service.APIKeyRoutingModeAuto
+		path := c.FullPath()
+		asyncImage := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/images/generations/async") || strings.HasSuffix(path, "/images/edits/async"))
+		captureForReentry := auto || asyncImage
+		if !captureForReentry && !apiKey.Group.ModelAllowlistEnabled() {
 			c.Next()
 			return
 		}
 		allowlist := apiKey.Group.ModelAllowlist
-		if c.Request == nil {
-			c.Next()
-			return
-		}
 
 		if isResponsesWebSocketRoute(c) {
 			// Responses WS 长连接由 ResponsesWebSocket 校验首帧与每个 response.create。
@@ -67,6 +80,9 @@ func GroupModelAllowlist() gin.HandlerFunc {
 					models = []string{model}
 				}
 			}
+		}
+		if captureForReentry && len(models) > 0 {
+			c.Set(autoRoutePublicModelsKey, models)
 		}
 
 		blocked := ""

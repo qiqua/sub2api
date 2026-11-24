@@ -18,7 +18,7 @@
             </div>
           </template>
         </CanvasScene>
-        <CanvasInspector v-if="selected" :key="selected.id" :node="selected" :references="references" :keys="keys" :models="models" :loading-keys="loadingKeys" :loading-models="loadingModels" :key-error="keyError" :model-error="modelError" :generating="selectedBusy" :poll-error="jobMessage" v-model:key-id="keyId" v-model:model="model" v-model:aspect-ratio="aspectRatio" @close="select(null)" @text="setText" @finish-edit="finishEdit" @reference="setReference" @branch="derive" @reuse="reusePrompt" @remove="removeNode" @poll="poll(selected)" @generate="generate(selected)" @reload-keys="loadKeys" @reload-models="loadModels" />
+        <CanvasInspector v-if="selected" :key="selected.id" :node="selected" :references="references" :keys="keys" :models="models" :loading-keys="loadingKeys" :loading-models="loadingModels" :key-error="keyError" :model-error="modelError" :generating="selectedBusy" :poll-error="jobMessage" :has-owner="!!owner" :request-missing="!!missing[selected.id]" :can-retry="!!owner && isGeminiKey(owner)" v-model:key-id="keyId" v-model:model="model" v-model:aspect-ratio="aspectRatio" @close="select(null)" @text="setText" @finish-edit="finishEdit" @reference="setReference" @branch="derive" @reuse="reusePrompt" @remove="removeNode" @poll="selected.intent ? checkIntent(selected) : poll(selected)" @retry="retry(selected)" @generate="generate(selected)" @reload-keys="loadKeys" @reload-models="loadModels" />
       </div>
       <footer class="canvas-tools">
         <div class="tool-group">
@@ -37,10 +37,10 @@
         <button type="button" class="canvas-icon help-toggle" :aria-label="t('canvas.help')" :title="t('canvas.help')" @click="help?.showModal()"><Icon name="questionCircle" /></button>
       </footer>
       <input ref="imageInput" type="file" multiple accept="image/png,image/jpeg,image/webp" hidden @change="chooseImages" />
-      <div v-if="message || saveState === 'failed'" class="canvas-notice" role="alert">
-        <span>{{ message || t('canvas.saveError') }}</span>
+      <div v-if="message || recoveredBoard || saveState === 'failed'" class="canvas-notice" role="alert">
+        <span>{{ message || (saveState === 'failed' ? t('canvas.saveError') : t('canvas.conflictSaved', { name: recoveredBoard })) }}</span>
         <button v-if="saveState === 'failed'" type="button" class="canvas-link" @click="retrySave">{{ t('canvas.retrySave') }}</button>
-        <button v-if="message" type="button" class="canvas-icon" :aria-label="t('common.close')" @click="message = ''"><Icon name="x" size="sm" /></button>
+        <button v-if="message || recoveredBoard" type="button" class="canvas-icon" :aria-label="t('common.close')" @click="message = ''; recoveredBoard = ''"><Icon name="x" size="sm" /></button>
       </div>
       <CanvasProjects ref="projects" :board="board" :boards="boards" :busy="busy" :locked="!!submitting" :error="projectError" @clear-error="projectError = ''" @open="id => projectAction(() => open(id))" @create="projectAction(newBoard)" @import="file => projectAction(() => importFile(file))" @rename="name => projectAction(async () => { rename(name); await flush() })" @remove="projectAction(remove)" @export="exportFile" />
       <CanvasLibrary ref="library" :user-id="userId" :board="board" :boards="boards" @use="useAsset" />
@@ -63,17 +63,18 @@ import CanvasInspector from './CanvasInspector.vue'
 import CanvasLibrary from './CanvasLibrary.vue'
 import CanvasProjects from './CanvasProjects.vue'
 import CanvasScene from './CanvasScene.vue'
-import { MAX_NODES, MAX_TOTAL_IMAGE_BYTES, newId, type CanvasNode, type Point } from './document'
+import { boardImageBytes, MAX_NODES, MAX_TOTAL_IMAGE_BYTES, newId, type CanvasNode, type Point } from './document'
 import { arrangeNodes, branchPoint, referenceChoices, vacantPoint } from './layout'
 import { CanvasArchiveError, exportBoard, validateImage } from './storage'
+import { isGeminiKey } from './gateway'
 import { useCanvasGeneration } from './useCanvasGeneration'
 import { useCanvasWorkspace } from './useCanvasWorkspace'
 import './workbench.css'
 
 const props = defineProps<{ userId: number }>()
 const { t } = useI18n()
-const { board, boards, busy, saveState, loadFailed, initialize, open, newBoard, importFile, rename, remove, flush,
-  setNodes, setViewport, finishEdit, startResult, patchResult, canUndo, canRedo, undo, redo } = useCanvasWorkspace(props.userId, () => t('canvas.untitled'))
+const { board, boards, busy, saveState, recoveredBoard, loadFailed, initialize, open, newBoard, importFile, rename, remove, flush,
+  setNodes, setViewport, finishEdit, startResult, patchResult, canUndo, canRedo, undo, redo } = useCanvasWorkspace(props.userId, () => t('canvas.untitled'), name => t('canvas.conflictName', { name }))
 const scene = ref<InstanceType<typeof CanvasScene>>()
 const projects = ref<InstanceType<typeof CanvasProjects>>()
 const library = ref<InstanceType<typeof CanvasLibrary>>()
@@ -85,19 +86,20 @@ const references = computed(() => selected.value?.kind === 'prompt' ? referenceC
 const message = ref('')
 const projectError = ref('')
 const gestures = ['pan', 'zoom', 'create', 'move', 'undo', 'paste'] as const
-const { keys, keyId, models, model, aspectRatio, loadingKeys, loadingModels, keyError, modelError, loadKeys, loadModels, submitting, generate, poll, pollErrors } = useCanvasGeneration({
+const { keys, recoveryKeys, keyId, models, model, aspectRatio, loadingKeys, loadingModels, keyError, modelError, loadKeys, loadModels, submitting, generate, retry, poll, checkIntent, missing, pollErrors } = useCanvasGeneration({
   board, startResult, patchResult, flush, reveal, notify: msg => { message.value = msg },
 })
 const selectedBusy = computed(() => {
   const node = selected.value
   if (!node) return false
   if (node.kind === 'image') return submitting.value === node.id
-  return !!submitting.value || !!board.value?.nodes.some(n => n.parentId === node.id && n.job)
+  return !!submitting.value || !!board.value?.nodes.some(n => n.parentId === node.id && (n.job || n.intent))
 })
+const owner = computed(() => recoveryKeys.value.find(k => k.id === (selected.value?.job ?? selected.value?.intent)?.keyId))
 const jobMessage = computed(() => {
   const n = selected.value
-  if (!n?.job) return ''
-  if (!loadingKeys.value && !keys.value.some(k => k.id === n.job?.keyId)) return t('canvas.jobKeyMissing')
+  if (!n || (!n.job && !n.intent)) return ''
+  if (!loadingKeys.value && !owner.value) return t('canvas.jobKeyMissing')
   return pollErrors.value[n.id] || ''
 })
 
@@ -150,7 +152,7 @@ function moveNode(id: string, x: number, y: number) {
 function removeNode() {
   const node = selected.value
   if (!node || !board.value || node.id === submitting.value) return
-  if (node.job && !window.confirm(t('canvas.removeJob'))) return
+  if ((node.job || node.intent) && !window.confirm(t('canvas.removeJob'))) return
   setNodes(board.value.nodes.filter(n => n.id !== node.id).map(n => n.parentId === node.id ? { ...n, parentId: undefined } : n))
   select(null)
 }
@@ -170,7 +172,7 @@ async function addFiles(files: File[], at?: Point) {
     for (const file of files) await validateImage(file)
     const current = board.value
     if (!current || current.id !== target || !canAdd(files.length)) return
-    const total = current.nodes.reduce((size, n) => size + (n.image?.size || 0), 0) + files.reduce((size, f) => size + f.size, 0)
+    const total = boardImageBytes(current.nodes) + files.reduce((size, f) => size + f.size, 0)
     if (total > MAX_TOTAL_IMAGE_BYTES) { message.value = t('canvas.imageSpace'); return }
     const nodes = [...current.nodes]
     const point = at ?? scene.value!.center()
@@ -193,7 +195,7 @@ function onPaste(event: ClipboardEvent) {
 function useAsset(source: CanvasNode) {
   if (!board.value || !canAdd()) return
   const image = source.image
-  if (image && board.value.nodes.reduce((s, n) => s + (n.image?.size || 0), image.size) > MAX_TOTAL_IMAGE_BYTES) {
+  if (image && boardImageBytes(board.value.nodes) + image.size > MAX_TOTAL_IMAGE_BYTES) {
     library.value?.close()
     message.value = t('canvas.imageSpace')
     return

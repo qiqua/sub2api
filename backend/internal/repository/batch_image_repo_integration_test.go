@@ -50,6 +50,45 @@ func TestBatchImageRepository_CreateJobAndDuplicates(t *testing.T) {
 	require.True(t, errors.Is(err, service.ErrBatchImageJobExists))
 }
 
+func TestBatchImageRepositoryConcurrentSubmissionIdentity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	repo := NewBatchImageRepository(integrationDB)
+	key := batchImageTestID(t, "request")
+	apiKeyID := int64(1002)
+	ids := [2]string{batchImageTestID(t, "a"), batchImageTestID(t, "b")}
+	t.Cleanup(func() {
+		_, err := integrationDB.Exec(`DELETE FROM batch_image_jobs WHERE batch_id IN ($1, $2)`, ids[0], ids[1])
+		require.NoError(t, err)
+	})
+	start := make(chan struct{})
+	results := make(chan error, len(ids))
+	for _, id := range ids {
+		go func() {
+			<-start
+			_, err := repo.CreateBatchImageJob(ctx, service.CreateBatchImageJobParams{
+				BatchID: id, UserID: 1001, APIKeyID: &apiKeyID, IdempotencyKey: &key,
+				Provider: service.BatchImageProviderGeminiAPI, Model: "gemini-image", ItemCount: 1,
+			})
+			results <- err
+		}()
+	}
+	close(start)
+	var winner, duplicate int
+	for range ids {
+		switch err := <-results; {
+		case err == nil:
+			winner++
+		case errors.Is(err, service.ErrBatchImageJobExists):
+			duplicate++
+		default:
+			t.Errorf("unexpected insert error: %v", err)
+		}
+	}
+	require.Equal(t, 1, winner)
+	require.Equal(t, 1, duplicate)
+}
+
 func TestBatchImageRepository_InvalidProvider(t *testing.T) {
 	tx := testTx(t)
 	repo := newBatchImageRepositoryWithSQL(tx)

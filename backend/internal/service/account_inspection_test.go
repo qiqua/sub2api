@@ -260,24 +260,24 @@ func TestSameAccountInspectionScanScope(t *testing.T) {
 	next := current
 	next.Cursor = 0
 
-	if !sameAccountInspectionScanScope(next, current) {
+	if !SameAccountInspectionScanScope(next, current) {
 		t.Fatal("same filters should keep the scan scope")
 	}
 
 	next.Filters.Group = "14"
-	if sameAccountInspectionScanScope(next, current) {
+	if SameAccountInspectionScanScope(next, current) {
 		t.Fatal("changed group filter should reset the scan scope")
 	}
 
 	next = current
 	next.RecheckAfterHours = current.RecheckAfterHours + 1
-	if sameAccountInspectionScanScope(next, current) {
+	if SameAccountInspectionScanScope(next, current) {
 		t.Fatal("changed skip window should reset the scan scope")
 	}
 
 	next = current
 	next.MaxAccountsPerRun = current.MaxAccountsPerRun / 2
-	if !sameAccountInspectionScanScope(next, current) {
+	if !SameAccountInspectionScanScope(next, current) {
 		t.Fatal("changed per-run throttle should keep the scan scope")
 	}
 }
@@ -290,6 +290,7 @@ func TestAccountInspectionRunKeepsInitialTotal(t *testing.T) {
 			{Items: []AccountInspectionCandidate{{AccountID: 2, Name: "two"}}, Cursor: 1, NextCursor: 2, HasMore: false, Total: 1},
 		},
 	}
+	repo.settings.BatchSleepSeconds = 0
 	tester := &successInspectionTester{}
 	svc := NewAccountInspectionService(repo, noopAdminService{}, tester, nil)
 	settings := repo.settings
@@ -300,6 +301,7 @@ func TestAccountInspectionRunKeepsInitialTotal(t *testing.T) {
 		TotalAccounts:    2,
 	}
 
+	repo.latestRun = inspectionRunCopy(run)
 	svc.run(context.Background(), run)
 
 	if run.TotalAccounts != 2 {
@@ -307,87 +309,6 @@ func TestAccountInspectionRunKeepsInitialTotal(t *testing.T) {
 	}
 	if run.Status != AccountInspectionRunCompleted {
 		t.Fatalf("run status = %q, want completed", run.Status)
-	}
-}
-
-func TestStartRunResetsCursorForManualStart(t *testing.T) {
-	settings := DefaultAccountInspectionSettings()
-	settings.Cursor = 9876
-	repo := &scriptedAccountInspectionRepository{
-		settings:   settings,
-		countTotal: 12,
-		batches: []AccountInspectionCandidateBatch{
-			{Items: nil, Cursor: 0, NextCursor: 0, HasMore: false, Total: 12},
-		},
-	}
-	svc := NewAccountInspectionService(repo, noopAdminService{}, &successInspectionTester{}, nil)
-
-	run, err := svc.StartRun(context.Background(), true)
-	if err != nil {
-		t.Fatalf("StartRun returned error: %v", err)
-	}
-
-	if run.SettingsSnapshot.Cursor != 0 {
-		t.Fatalf("run cursor = %d, want 0", run.SettingsSnapshot.Cursor)
-	}
-	if repo.createdSettings.Cursor != 0 {
-		t.Fatalf("created settings cursor = %d, want 0", repo.createdSettings.Cursor)
-	}
-}
-
-func TestStartRunKeepsCursorForAutomaticResume(t *testing.T) {
-	settings := DefaultAccountInspectionSettings()
-	settings.Cursor = 9876
-	repo := &scriptedAccountInspectionRepository{
-		settings:   settings,
-		countTotal: 12,
-		batches: []AccountInspectionCandidateBatch{
-			{Items: nil, Cursor: 9876, NextCursor: 9876, HasMore: false, Total: 0},
-		},
-	}
-	svc := NewAccountInspectionService(repo, noopAdminService{}, &successInspectionTester{}, nil)
-
-	run, err := svc.StartRun(context.Background())
-	if err != nil {
-		t.Fatalf("StartRun returned error: %v", err)
-	}
-
-	if run.SettingsSnapshot.Cursor != 9876 {
-		t.Fatalf("run cursor = %d, want 9876", run.SettingsSnapshot.Cursor)
-	}
-	if repo.createdSettings.Cursor != 9876 {
-		t.Fatalf("created settings cursor = %d, want 9876", repo.createdSettings.Cursor)
-	}
-}
-
-func TestStartRunContinuesPausedRunWithMoreCandidates(t *testing.T) {
-	settings := DefaultAccountInspectionSettings()
-	settings.Cursor = 9876
-	repo := &scriptedAccountInspectionRepository{
-		settings:   settings,
-		countTotal: 12,
-		latestRun: &AccountInspectionRun{
-			ID:         99,
-			Status:     AccountInspectionRunPaused,
-			NextCursor: 9876,
-			HasMore:    true,
-		},
-		batches: []AccountInspectionCandidateBatch{
-			{Items: nil, Cursor: 9876, NextCursor: 9876, HasMore: false, Total: 12},
-		},
-	}
-	svc := NewAccountInspectionService(repo, noopAdminService{}, &successInspectionTester{}, nil)
-
-	run, err := svc.StartRun(context.Background(), true)
-	if err != nil {
-		t.Fatalf("StartRun returned error: %v", err)
-	}
-
-	if run.SettingsSnapshot.Cursor != 9876 {
-		t.Fatalf("run cursor = %d, want 9876", run.SettingsSnapshot.Cursor)
-	}
-	if repo.createdSettings.Cursor != 9876 {
-		t.Fatalf("created settings cursor = %d, want 9876", repo.createdSettings.Cursor)
 	}
 }
 
@@ -429,43 +350,6 @@ func TestAccountInspectionProcessBatchStopsDispatchingAfterCancel(t *testing.T) 
 	}
 	if stats.Processed != 1 {
 		t.Fatalf("processed = %d, want 1", stats.Processed)
-	}
-}
-
-func TestGetStatusStopsOrphanedActiveRun(t *testing.T) {
-	startedAt := time.Now().Add(-5 * time.Minute)
-	repo := &scriptedAccountInspectionRepository{
-		settings: DefaultAccountInspectionSettings(),
-		latestRun: &AccountInspectionRun{
-			ID:            7,
-			Status:        AccountInspectionRunStopping,
-			TotalAccounts: 10,
-			StartedAt:     &startedAt,
-			CreatedAt:     startedAt,
-			UpdatedAt:     startedAt,
-		},
-	}
-	svc := NewAccountInspectionService(repo, noopAdminService{}, &successInspectionTester{}, nil)
-
-	status, err := svc.GetStatus(context.Background())
-	if err != nil {
-		t.Fatalf("GetStatus returned error: %v", err)
-	}
-
-	if status.Running {
-		t.Fatal("status should not report an orphaned stopping run as running")
-	}
-	if status.Run == nil {
-		t.Fatal("status run is nil")
-	}
-	if status.Run.Status != AccountInspectionRunStopped {
-		t.Fatalf("run status = %q, want %q", status.Run.Status, AccountInspectionRunStopped)
-	}
-	if status.Run.FinishedAt == nil {
-		t.Fatal("finished_at should be set when orphaned run is stopped")
-	}
-	if len(repo.updates) != 1 {
-		t.Fatalf("UpdateRun calls = %d, want 1", len(repo.updates))
 	}
 }
 
@@ -511,30 +395,16 @@ func (noopAdminService) SetAccountSchedulable(_ context.Context, id int64, sched
 	return &Account{ID: id, Status: StatusActive, Schedulable: schedulable}, nil
 }
 
-type noopAccountInspectionRepository struct{}
+type noopAccountInspectionRepository struct {
+	AccountInspectionRepository
+}
 
 func (r *noopAccountInspectionRepository) GetSettings(context.Context) (AccountInspectionSettings, error) {
 	return DefaultAccountInspectionSettings(), nil
 }
 
-func (r *noopAccountInspectionRepository) SaveSettings(_ context.Context, settings AccountInspectionSettings) (AccountInspectionSettings, error) {
-	return settings, nil
-}
-
-func (r *noopAccountInspectionRepository) CreateRun(context.Context, AccountInspectionSettings, int64) (*AccountInspectionRun, error) {
-	return nil, nil
-}
-
 func (r *noopAccountInspectionRepository) GetLatestRun(context.Context) (*AccountInspectionRun, error) {
 	return nil, nil
-}
-
-func (r *noopAccountInspectionRepository) GetRun(context.Context, int64) (*AccountInspectionRun, error) {
-	return nil, nil
-}
-
-func (r *noopAccountInspectionRepository) UpdateRun(context.Context, *AccountInspectionRun) error {
-	return nil
 }
 
 func (r *noopAccountInspectionRepository) ListCandidates(context.Context, AccountInspectionSettings) (AccountInspectionCandidateBatch, error) {
@@ -577,81 +447,6 @@ func (r *noopAccountInspectionRepository) Prune(context.Context, int, int) error
 	return nil
 }
 
-type scriptedAccountInspectionRepository struct {
-	noopAccountInspectionRepository
-	settings        AccountInspectionSettings
-	batches         []AccountInspectionCandidateBatch
-	updates         []*AccountInspectionRun
-	countTotal      int64
-	countSettings   AccountInspectionSettings
-	createdSettings AccountInspectionSettings
-	latestRun       *AccountInspectionRun
-}
-
-func (r *scriptedAccountInspectionRepository) GetSettings(context.Context) (AccountInspectionSettings, error) {
-	return r.settings, nil
-}
-
-func (r *scriptedAccountInspectionRepository) SaveSettings(_ context.Context, settings AccountInspectionSettings) (AccountInspectionSettings, error) {
-	r.settings = settings
-	return settings, nil
-}
-
-func (r *scriptedAccountInspectionRepository) CreateRun(_ context.Context, settings AccountInspectionSettings, total int64) (*AccountInspectionRun, error) {
-	r.createdSettings = settings
-	return &AccountInspectionRun{
-		ID:               1,
-		Status:           AccountInspectionRunQueued,
-		SettingsSnapshot: settings,
-		TotalAccounts:    total,
-		Cursor:           settings.Cursor,
-		NextCursor:       settings.Cursor,
-	}, nil
-}
-
-func (r *scriptedAccountInspectionRepository) GetLatestRun(context.Context) (*AccountInspectionRun, error) {
-	return r.latestRun, nil
-}
-
-func (r *scriptedAccountInspectionRepository) CountCandidates(_ context.Context, settings AccountInspectionSettings) (int64, error) {
-	r.countSettings = settings
-	return r.countTotal, nil
-}
-
-func (r *scriptedAccountInspectionRepository) ListCandidates(context.Context, AccountInspectionSettings) (AccountInspectionCandidateBatch, error) {
-	if len(r.batches) == 0 {
-		return AccountInspectionCandidateBatch{}, nil
-	}
-	batch := r.batches[0]
-	r.batches = r.batches[1:]
-	return batch, nil
-}
-
-func (r *scriptedAccountInspectionRepository) UpdateRun(_ context.Context, run *AccountInspectionRun) error {
-	cp := *run
-	r.updates = append(r.updates, &cp)
-	if r.latestRun != nil && r.latestRun.ID == run.ID {
-		r.latestRun = &cp
-	}
-	return nil
-}
-
-func (r *scriptedAccountInspectionRepository) SaveResult(context.Context, AccountInspectionResult) error {
-	return nil
-}
-
-func (r *scriptedAccountInspectionRepository) UpdateState(context.Context, AccountInspectionResult, AccountInspectionStatePatch) error {
-	return nil
-}
-
-func (r *scriptedAccountInspectionRepository) RecordLog(context.Context, *int64, string, string) error {
-	return nil
-}
-
-func (r *scriptedAccountInspectionRepository) Prune(context.Context, int, int) error {
-	return nil
-}
-
 type recordingInspectionAdminService struct {
 	noopAdminService
 	disabledCount atomic.Int32
@@ -668,6 +463,10 @@ type recordingAccountInspectionRepository struct {
 	noopAccountInspectionRepository
 	savedResult AccountInspectionResult
 	statePatch  AccountInspectionStatePatch
+}
+
+func (r *recordingAccountInspectionRepository) RenewRun(context.Context, int64) error {
+	return nil
 }
 
 func (r *recordingAccountInspectionRepository) SaveResult(_ context.Context, result AccountInspectionResult) error {

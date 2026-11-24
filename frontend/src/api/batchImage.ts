@@ -9,6 +9,7 @@ import {
   previewListBatchImageItems,
   previewListBatchImageJobs,
   previewListBatchImageModels,
+  previewLookupBatchImageJob,
   previewSubmitBatchImageJob,
 } from '@/dev/previewBatchImage'
 
@@ -121,22 +122,13 @@ export interface BatchImageJobsListOptions {
   to?: string
 }
 
-async function parseBatchImageError(response: Response): Promise<Error> {
-  try {
-    const body = await response.json()
-    const message = body?.error?.message || body?.message || response.statusText
-    const error = new Error(message)
-    ;(error as any).code = body?.error?.code || response.status
-    ;(error as any).status = response.status
-    ;(error as any).requestId = response.headers.get('X-Request-Id') || ''
-    return error
-  } catch {
-    const error = new Error(response.statusText || `HTTP ${response.status}`)
-    ;(error as any).code = response.status
-    ;(error as any).status = response.status
-    ;(error as any).requestId = response.headers.get('X-Request-Id') || ''
-    return error
-  }
+async function parseBatchImageError(response: Response) {
+  const body = await response.json().catch(() => undefined)
+  return Object.assign(new Error(body?.error?.message || body?.message || response.statusText || `HTTP ${response.status}`), {
+    code: body?.error?.code || response.status,
+    status: response.status,
+    requestId: response.headers.get('X-Request-Id') || '',
+  })
 }
 
 function authHeaders(apiKey: string, extra?: HeadersInit): HeadersInit {
@@ -152,10 +144,11 @@ export async function submitBatchImageJob(
   idempotencyKey: string,
   signal?: AbortSignal,
 ): Promise<BatchImageJob> {
-  if (isPreviewMode) return previewSubmitBatchImageJob(payload)
+  if (isPreviewMode) return previewSubmitBatchImageJob(apiKey, payload, idempotencyKey)
   const response = await fetch(buildGatewayUrl('/v1/images/batches'), {
     method: 'POST',
     signal,
+    redirect: 'error',
     headers: authHeaders(apiKey, {
       'Content-Type': 'application/json',
       'Idempotency-Key': idempotencyKey,
@@ -163,6 +156,23 @@ export async function submitBatchImageJob(
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw await parseBatchImageError(response)
+  return response.json()
+}
+
+export async function lookupBatchImageJob(apiKey: string, requestId: string, signal?: AbortSignal): Promise<BatchImageJob | undefined> {
+  if (isPreviewMode) return previewLookupBatchImageJob(apiKey, requestId)
+  const response = await fetch(buildGatewayUrl('/v1/images/batches/by-idempotency-key'), {
+    method: 'GET',
+    headers: authHeaders(apiKey, { 'Idempotency-Key': requestId }),
+    signal,
+    cache: 'no-store',
+    redirect: 'error',
+  })
+  if (!response.ok) {
+    const error = await parseBatchImageError(response)
+    if (response.status === 404 && error.code === 'BATCH_IMAGE_NOT_FOUND') return undefined
+    throw error
+  }
   return response.json()
 }
 

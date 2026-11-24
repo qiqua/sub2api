@@ -99,7 +99,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 	reqLog = annotateOpenAILargeContextRequest(c, reqLog, h.cfg, "gateway.responses", reqStream, body)
 
-	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel)
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel, service.WithAPIKeyAutoRouteGeminiImageRequest(nil, clientRequestedModel(c, reqModel), reqModel))
+	if apiKey == nil {
+		return
+	}
 
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))

@@ -5,11 +5,12 @@ import {
   getBatchImageJob,
   listBatchImageItems,
   listBatchImageModels,
+  lookupBatchImageJob,
   submitBatchImageJob,
   type BatchImageSubmitItem,
 } from '@/api/batchImage'
 import type { ApiKey } from '@/types'
-import { IMAGE_TYPES, MAX_IMAGE_BYTES, type CanvasJob } from './document'
+import { IMAGE_TYPES, MAX_IMAGE_BYTES, type CanvasJob, type CanvasSubmitIntent } from './document'
 
 export type CanvasAspectRatio = '1:1' | '3:2' | '2:3'
 
@@ -34,7 +35,7 @@ const CANVAS_KEY_PAGE_SIZE = 100
 const CANVAS_CUSTOM_ID = 'canvas_image'
 const TERMINAL_BATCH_STATUSES = new Set(['failed', 'cancelled', 'output_deleted'])
 
-function isGeminiKey(key: ApiKey): boolean {
+export function isGeminiKey(key: ApiKey): boolean {
   return key.status === 'active' && key.group?.platform === 'gemini' && key.group.allow_batch_image_generation === true
 }
 
@@ -46,7 +47,7 @@ function isNativeKey(key: ApiKey): boolean {
   )
 }
 
-function isCanvasKey(key: ApiKey): boolean {
+export function isCanvasKey(key: ApiKey): boolean {
   return isGeminiKey(key) || isNativeKey(key)
 }
 
@@ -86,7 +87,7 @@ function assertCanvasKey(key: ApiKey): void {
   if (!isCanvasKey(key)) throw new Error('This API key is not enabled for image generation')
 }
 
-export async function listCanvasKeys(): Promise<ApiKey[]> {
+export async function listCanvasKeys(includeRecovery = false): Promise<ApiKey[]> {
   const keys: ApiKey[] = []
   let page = 1
   while (true) {
@@ -96,7 +97,7 @@ export async function listCanvasKeys(): Promise<ApiKey[]> {
       sort_order: 'desc',
     })
     const pageItems = response.items || []
-    keys.push(...pageItems.filter(isCanvasKey))
+    keys.push(...pageItems.filter(key => includeRecovery ? key.status === 'active' : isCanvasKey(key)))
     if (!pageItems.length || page >= response.pages) break
     page += 1
   }
@@ -211,26 +212,62 @@ async function nativeImageResponse(response: Response, signal?: AbortSignal): Pr
   throw new Error('The image gateway returned no usable image')
 }
 
+const permanentSubmitValidationErrors: Record<string, true> = {
+  BATCH_IMAGE_INVALID_MODEL: true,
+  BATCH_IMAGE_INVALID_PROVIDER: true,
+  BATCH_IMAGE_INVALID_ITEMS: true,
+  BATCH_IMAGE_DUPLICATE_CUSTOM_ID: true,
+  BATCH_IMAGE_PROMPT_TOO_LONG: true,
+  BATCH_IMAGE_INVALID_REFERENCE_IMAGE: true,
+  BATCH_IMAGE_TOO_MANY_REFERENCE_IMAGES: true,
+  BATCH_IMAGE_REFERENCE_IMAGES_TOO_LARGE: true,
+  BATCH_IMAGE_TOO_MANY_OUTPUT_IMAGES: true,
+}
+
+export function isTerminalCanvasSubmitError(err: unknown): boolean {
+  if (!err || typeof err !== 'object' || !('status' in err) || err.status !== 400) return false
+  return 'code' in err && typeof err.code === 'string' && permanentSubmitValidationErrors[err.code] === true
+}
+
+function canvasJob(key: ApiKey, batch: { id: string }): CanvasJob {
+  if (typeof batch?.id !== 'string' || !batch.id.trim()) throw new Error('The batch gateway returned no job ID')
+  return { id: batch.id, keyId: key.id }
+}
+
+export async function lookupCanvasJob(key: ApiKey, requestId: string, signal?: AbortSignal): Promise<CanvasJob | undefined> {
+  const batch = await lookupBatchImageJob(key.key, requestId, signal)
+  return batch === undefined ? undefined : canvasJob(key, batch)
+}
+
+async function submitGeminiImage(options: SubmitCanvasImageOptions): Promise<CanvasJob> {
+  const { key, model, prompt, reference, aspectRatio, requestId, signal } = options
+  const item: BatchImageSubmitItem = { custom_id: CANVAS_CUSTOM_ID, prompt, output_count: 1 }
+  if (reference) {
+    const mime = mimeForBlob(reference)
+    item.reference_images = [{ id: 'canvas-reference', type: 'reference', mime_type: mime, data: await blobToBase64(reference) }]
+  }
+  const batch = await submitBatchImageJob(key.key, {
+    model,
+    aspect_ratio: aspectRatio,
+    response_mime_type: 'image/png',
+    image_size: '1K',
+    items: [item],
+  }, requestId, signal)
+  return canvasJob(key, batch)
+}
+
+export async function submitCanvasIntent(key: ApiKey, intent: CanvasSubmitIntent, signal?: AbortSignal): Promise<CanvasJob> {
+  if (key.id !== intent.keyId) throw new Error('This canvas submission belongs to another API key')
+  if (!isGeminiKey(key)) throw new Error('This API key is not enabled for batch image generation')
+  return submitGeminiImage({ ...intent, key, signal })
+}
+
 export async function submitCanvasImage(options: SubmitCanvasImageOptions): Promise<SubmitCanvasImageResult> {
   const { key, model, prompt, reference, requestId, signal, aspectRatio } = options
   assertCanvasKey(key)
   if (!model.trim() || !prompt.trim()) throw new Error('Choose an image model and enter a prompt')
 
-  if (isGeminiKey(key)) {
-    const item: BatchImageSubmitItem = { custom_id: CANVAS_CUSTOM_ID, prompt, output_count: 1 }
-    if (reference) {
-      const mime = mimeForBlob(reference)
-      item.reference_images = [{ id: 'canvas-reference', type: 'reference', mime_type: mime, data: await blobToBase64(reference) }]
-    }
-    const batch = await submitBatchImageJob(key.key, {
-      model,
-      aspect_ratio: aspectRatio,
-      response_mime_type: 'image/png',
-      image_size: '1K',
-      items: [item],
-    }, requestId, signal)
-    return { job: { id: batch.id, keyId: key.id } }
-  }
+  if (isGeminiKey(key)) return { job: await submitGeminiImage(options) }
 
   const isGrok = key.group?.platform === 'grok'
   const headers: HeadersInit = { 'X-Request-ID': requestId }
@@ -262,7 +299,6 @@ export async function submitCanvasImage(options: SubmitCanvasImageOptions): Prom
 
 export async function checkCanvasJob(key: ApiKey, job: CanvasJob, signal?: AbortSignal): Promise<CanvasJobStatus> {
   if (key.id !== job.keyId) return { status: 'failed', message: 'This canvas job belongs to another API key' }
-  assertCanvasKey(key)
   // Keep the job handle on transport errors so the user can retrieve the same result later.
   const batch = await getBatchImageJob(key.key, job.id, signal)
   if (TERMINAL_BATCH_STATUSES.has(batch.status)) return { status: 'failed', message: `Batch ${job.id}: ${batch.status}` }

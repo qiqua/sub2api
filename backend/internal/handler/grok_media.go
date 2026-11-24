@@ -113,7 +113,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 	}
 	requestModel := requestInfo.Model
-	routingModel := service.NormalizeGrokMediaModelForEndpoint(endpoint, requestModel, requestInfo.HasInputImage())
+	routingModel := requestModel
+	if resolved, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context()); ok && (endpoint == service.GrokMediaEndpointImagesGenerations || endpoint == service.GrokMediaEndpointImagesEdits) {
+		routingModel = resolved
+	}
+	routingModel = service.NormalizeGrokMediaModelForEndpoint(endpoint, routingModel, requestInfo.HasInputImage())
 	if endpoint.IsGenerationRequest() && strings.TrimSpace(requestModel) == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
@@ -123,9 +127,17 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		return
 	}
 
-	reqLog = reqLog.With(zap.String("model", requestModel))
-	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, requestModel)
-	setOpsRequestContext(c, requestModel, false)
+	publicModel := clientRequestedModel(c, requestModel)
+	reqLog = reqLog.With(zap.String("model", publicModel))
+	var routeOptions []service.APIKeyAutoRouteOption
+	if endpoint.IsGenerationRequest() {
+		routeOptions = append(routeOptions, service.WithAPIKeyAutoRouteImageGenerationRequired())
+	}
+	apiKey = applyImageTaskRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, routingModel, publicModel, routeOptions...)
+	if apiKey == nil {
+		return
+	}
+	setOpsRequestContext(c, publicModel, false)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
 
 	if endpoint.IsGenerationRequest() {
@@ -134,7 +146,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			return
 		}
 		if moderationBody := requestInfo.ModerationBody(); len(moderationBody) > 0 {
-			decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIImages, requestModel, moderationBody)
+			decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIImages, publicModel, moderationBody)
 			if decision != nil && !decision.AllowNextStage {
 				h.openAISecurityAuditError(c, decision)
 				return

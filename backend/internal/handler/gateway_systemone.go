@@ -69,6 +69,9 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 		return
 	}
 	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, model)
+	if apiKey == nil {
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, model)
 	if apiKey.Group.Platform != service.PlatformTypeSafe &&
 		(apiKey.Group.Platform != service.PlatformComposite || !compositeTargetPlatformAllowed(c, apiKey, model, service.PlatformTypeSafe)) {

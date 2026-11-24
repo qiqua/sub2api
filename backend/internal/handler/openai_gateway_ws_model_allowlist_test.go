@@ -179,3 +179,18 @@ func TestOpenAIResponsesWebSocket_SessionUpdateToAllowedModelStillWorks(t *testi
 		t.Fatalf("expected at least two completed events, got %d", len(got.clientEvents))
 	}
 }
+
+func TestOpenAIResponsesWebSocket_ImagePermissionCheckedOnLaterTurn(t *testing.T) {
+	for _, mode := range []string{service.OpenAIWSIngressModePassthrough, service.OpenAIWSIngressModeDedicated} {
+		t.Run(mode, func(t *testing.T) {
+			runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+				firstPayload:            `{"type":"response.create","model":"gpt-5.4"}`,
+				secondPayload:           `{"type":"response.create","model":"gpt-5.4","tool_choice":{"type":"image_generation"}}`,
+				group:                   wsAllowlistGroup(true, "gpt-5.4"),
+				ingressMode:             mode,
+				secondTurnCloseExpected: true,
+				closeReason:             service.ImageGenerationPermissionMessage(),
+			})
+		})
+	}
+}

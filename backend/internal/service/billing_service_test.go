@@ -1423,6 +1423,29 @@ func TestGetModelPricing_GrokOfficialFamilyCards(t *testing.T) {
 	}
 }
 
+func TestCalculateCostUnified_KimiK3FallbackCacheWriteTTL(t *testing.T) {
+	svc := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, svc)
+	for _, tc := range []struct {
+		name, model string
+		tokens      UsageTokens
+		want        float64
+	}{
+		{"pro 1h", "kimi-k3.1-pro", UsageTokens{CacheCreationTokens: 1_000_000, CacheCreation1hTokens: 1_000_000}, 4},
+		{"pro 5m", "kimi-k3.1-pro", UsageTokens{CacheCreation5mTokens: 1_000_000}, 2},
+		{"pro aggregate only", "kimi-k3.1-pro", UsageTokens{CacheCreationTokens: 1_000_000}, 2},
+		{"highspeed mixed TTL", "kimi-k3.1-pro-highspeed", UsageTokens{CacheCreationTokens: 1_000_000, CacheCreation5mTokens: 500_000, CacheCreation1hTokens: 500_000}, 6},
+		{"k3 partial TTL", "kimi-k3", UsageTokens{CacheCreationTokens: 1_000_000, CacheCreation1hTokens: 500_000}, 4.5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cost, err := svc.CalculateCostUnified(CostInput{Model: tc.model, Tokens: tc.tokens, Resolver: resolver, RateMultiplier: 1})
+			require.NoError(t, err)
+			require.InDelta(t, tc.want, cost.CacheCreationCost, 1e-10)
+			require.InDelta(t, tc.want, cost.ActualCost, 1e-10)
+		})
+	}
+}
+
 func TestCalculateCostUnified_GroupLongContextToggleUsesPresetLadder(t *testing.T) {
 	svc := newTestBillingService()
 	resolver := NewModelPricingResolver(nil, svc)

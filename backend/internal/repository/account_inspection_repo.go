@@ -16,118 +16,51 @@ import (
 const accountInspectionSettingsKey = "account_inspection_settings"
 
 type accountInspectionRepository struct {
-	db          *sql.DB
-	settingRepo service.SettingRepository
+	db *sql.DB
 }
 
-func NewAccountInspectionRepository(db *sql.DB, settingRepo service.SettingRepository) service.AccountInspectionRepository {
-	return &accountInspectionRepository{db: db, settingRepo: settingRepo}
+func NewAccountInspectionRepository(db *sql.DB, _ service.SettingRepository) service.AccountInspectionRepository {
+	return &accountInspectionRepository{db: db}
 }
 
 func (r *accountInspectionRepository) GetSettings(ctx context.Context) (service.AccountInspectionSettings, error) {
-	if r == nil || r.settingRepo == nil {
+	return readInspectionSettings(ctx, r.db)
+}
+
+type inspectionQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func readInspectionSettings(ctx context.Context, q inspectionQueryer) (service.AccountInspectionSettings, error) {
+	var raw []byte
+	err := q.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = $1`, accountInspectionSettingsKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
 		return service.DefaultAccountInspectionSettings(), nil
 	}
-	raw, err := r.settingRepo.GetValue(ctx, accountInspectionSettingsKey)
 	if err != nil {
-		if errors.Is(err, service.ErrSettingNotFound) {
-			defaults := service.DefaultAccountInspectionSettings()
-			if _, saveErr := r.SaveSettings(ctx, defaults); saveErr != nil {
-				return defaults, saveErr
-			}
-			return defaults, nil
-		}
 		return service.AccountInspectionSettings{}, err
 	}
 	var settings service.AccountInspectionSettings
-	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+	if err := json.Unmarshal(raw, &settings); err != nil {
 		settings = service.DefaultAccountInspectionSettings()
 	}
 	return service.NormalizeAccountInspectionSettings(settings), nil
 }
 
-func (r *accountInspectionRepository) SaveSettings(ctx context.Context, settings service.AccountInspectionSettings) (service.AccountInspectionSettings, error) {
-	settings = service.NormalizeAccountInspectionSettings(settings)
-	settings.UpdatedAt = time.Now()
-	data, err := json.Marshal(settings)
-	if err != nil {
-		return settings, err
-	}
-	if err := r.settingRepo.Set(ctx, accountInspectionSettingsKey, string(data)); err != nil {
-		return settings, err
-	}
-	return settings, nil
-}
-
-func (r *accountInspectionRepository) CreateRun(ctx context.Context, settings service.AccountInspectionSettings, total int64) (*service.AccountInspectionRun, error) {
-	settings = service.NormalizeAccountInspectionSettings(settings)
-	data, err := json.Marshal(settings)
-	if err != nil {
-		return nil, err
-	}
-	row := r.db.QueryRowContext(ctx, `
-		INSERT INTO account_inspection_runs (
-			status, settings_snapshot, total_accounts, cursor, next_cursor, has_more, created_at, updated_at
-		)
-		VALUES ($1, $2::jsonb, $3, $4, $4, FALSE, NOW(), NOW())
-		RETURNING id, status, settings_snapshot, total_accounts, cursor, next_cursor, has_more, error,
-			started_at, finished_at, created_at, updated_at
-	`, service.AccountInspectionRunQueued, string(data), total, settings.Cursor)
-	return scanAccountInspectionRun(row)
-}
-
 func (r *accountInspectionRepository) GetLatestRun(ctx context.Context) (*service.AccountInspectionRun, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, status, settings_snapshot, total_accounts, cursor, next_cursor, has_more, error,
-			started_at, finished_at, created_at, updated_at
-		FROM account_inspection_runs
-		ORDER BY created_at DESC
-		LIMIT 1
-	`)
-	run, err := scanAccountInspectionRun(row)
+	return latestInspectionRun(ctx, r.db)
+}
+
+const inspectionRunColumns = `id, status, settings_snapshot, total_accounts, cursor, next_cursor, has_more, error,
+	started_at, finished_at, created_at, updated_at`
+
+func latestInspectionRun(ctx context.Context, q inspectionQueryer) (*service.AccountInspectionRun, error) {
+	run, err := scanAccountInspectionRun(q.QueryRowContext(ctx, `SELECT `+inspectionRunColumns+`
+		FROM account_inspection_runs ORDER BY id DESC LIMIT 1`))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return run, err
-}
-
-func (r *accountInspectionRepository) GetRun(ctx context.Context, id int64) (*service.AccountInspectionRun, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, status, settings_snapshot, total_accounts, cursor, next_cursor, has_more, error,
-			started_at, finished_at, created_at, updated_at
-		FROM account_inspection_runs
-		WHERE id = $1
-	`, id)
-	run, err := scanAccountInspectionRun(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	return run, err
-}
-
-func (r *accountInspectionRepository) UpdateRun(ctx context.Context, run *service.AccountInspectionRun) error {
-	if run == nil {
-		return nil
-	}
-	data, err := json.Marshal(run.SettingsSnapshot)
-	if err != nil {
-		return err
-	}
-	_, err = r.db.ExecContext(ctx, `
-		UPDATE account_inspection_runs
-		SET status = $2,
-			settings_snapshot = $3::jsonb,
-			total_accounts = $4,
-			cursor = $5,
-			next_cursor = $6,
-			has_more = $7,
-			error = $8,
-			started_at = $9,
-			finished_at = $10,
-			updated_at = NOW()
-		WHERE id = $1
-	`, run.ID, run.Status, string(data), run.TotalAccounts, run.Cursor, run.NextCursor, run.HasMore, inspectionNullString(run.Error), run.StartedAt, run.FinishedAt)
-	return err
 }
 
 func (r *accountInspectionRepository) ListCandidates(ctx context.Context, settings service.AccountInspectionSettings) (service.AccountInspectionCandidateBatch, error) {
@@ -136,17 +69,13 @@ func (r *accountInspectionRepository) ListCandidates(ctx context.Context, settin
 	if err != nil {
 		return service.AccountInspectionCandidateBatch{}, err
 	}
-	total, err := r.countCandidatesWithWhere(ctx, where, args)
-	if err != nil {
-		return service.AccountInspectionCandidateBatch{}, err
-	}
-
+	var total int64
 	limit := settings.BatchLimit + 1
 	args = append(args, limit)
 	query := fmt.Sprintf(`
 		SELECT a.id, a.name, a.platform, a.type, a.schedulable, COALESCE(s.auto_disabled, FALSE),
 			COALESCE(s.delete_candidate_category, ''), s.delete_candidate_first_seen_at,
-			COALESCE(s.delete_candidate_count, 0)
+			COALESCE(s.delete_candidate_count, 0), count(*) OVER ()
 		FROM accounts a
 		LEFT JOIN account_inspection_states s ON s.account_id = a.id
 		%s
@@ -175,6 +104,7 @@ func (r *accountInspectionRepository) ListCandidates(ctx context.Context, settin
 			&item.DeleteCandidateCategory,
 			&firstSeen,
 			&item.DeleteCandidateCount,
+			&total,
 		); err != nil {
 			return service.AccountInspectionCandidateBatch{}, err
 		}
@@ -206,19 +136,21 @@ func (r *accountInspectionRepository) CountCandidates(ctx context.Context, setti
 	if err != nil {
 		return 0, err
 	}
-	return r.countCandidatesWithWhere(ctx, where, args)
+	return countInspectionCandidates(ctx, r.db, where, args)
 }
 
 func (r *accountInspectionRepository) SaveResult(ctx context.Context, result service.AccountInspectionResult) error {
-	_, err := r.db.ExecContext(ctx, `
+	return r.withWritableInspection(ctx, result.RunID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO account_inspection_results (
 			run_id, account_id, name, platform, type, status, category, http_status, error_code, message,
 			latency_ms, action, action_error, checked_at, created_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
 	`, result.RunID, result.AccountID, result.Name, result.Platform, result.Type, result.Status, result.Category,
-		result.HTTPStatus, result.ErrorCode, result.Message, result.LatencyMs, result.Action, result.ActionError, result.CheckedAt)
-	return err
+			result.HTTPStatus, result.ErrorCode, result.Message, result.LatencyMs, result.Action, result.ActionError, result.CheckedAt)
+		return err
+	})
 }
 
 func (r *accountInspectionRepository) UpdateState(ctx context.Context, result service.AccountInspectionResult, patch service.AccountInspectionStatePatch) error {
@@ -308,8 +240,10 @@ func (r *accountInspectionRepository) UpdateState(ctx context.Context, result se
 		insertDeleteCandidateCategorySQL, insertDeleteCandidateFirstSeenAtSQL, insertDeleteCandidateCountSQL,
 		updateAutoDisabledSQL, updateAutoDisabledReasonSQL, updateAutoDisabledAtSQL, updateRestoredAtSQL,
 		updateDeleteCandidateCategorySQL, updateDeleteCandidateFirstSeenAtSQL, updateDeleteCandidateCountSQL)
-	_, err := r.db.ExecContext(ctx, query, args...)
-	return err
+	return r.withWritableInspection(ctx, result.RunID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, query, args...)
+		return err
+	})
 }
 
 func (r *accountInspectionRepository) GetAccountAutoDisabled(ctx context.Context, accountID int64) (bool, error) {
@@ -578,7 +512,7 @@ func accountInspectionStatusClause(status string) string {
 	}
 }
 
-func (r *accountInspectionRepository) countCandidatesWithWhere(ctx context.Context, where string, args []any) (int64, error) {
+func countInspectionCandidates(ctx context.Context, q inspectionQueryer, where string, args []any) (int64, error) {
 	query := fmt.Sprintf(`
 		SELECT COUNT(*)
 		FROM accounts a
@@ -586,7 +520,7 @@ func (r *accountInspectionRepository) countCandidatesWithWhere(ctx context.Conte
 		%s
 	`, where)
 	var total int64
-	err := r.db.QueryRowContext(ctx, query, args...).Scan(&total)
+	err := q.QueryRowContext(ctx, query, args...).Scan(&total)
 	return total, err
 }
 

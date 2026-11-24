@@ -1,4 +1,4 @@
-import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_NODES, MAX_TOTAL_IMAGE_BYTES, newId, type CanvasBoard, type CanvasNode, type Viewport } from './document'
+import { boardImageBytes, IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_NODES, MAX_TOTAL_IMAGE_BYTES, newId, type CanvasBoard, type CanvasNode, type CanvasSubmitIntent, type Viewport } from './document'
 
 const MAX_ARCHIVE_BYTES = 48 * 1024 * 1024
 const MAX_IMAGE_PIXELS = 32 * 1024 * 1024
@@ -12,6 +12,13 @@ export class CanvasArchiveError extends Error {
   ) {
     super(message)
     this.name = 'CanvasArchiveError'
+  }
+}
+
+export class CanvasConflictError extends Error {
+  constructor(readonly committed?: CanvasBoard, readonly version = committed?.version) {
+    super('Canvas changed in another tab.')
+    this.name = 'CanvasConflictError'
   }
 }
 
@@ -86,6 +93,29 @@ function nodeFields(value: Record<string, unknown>): CanvasNode {
   return node
 }
 
+function intentFields(value: unknown, node: CanvasNode): CanvasSubmitIntent {
+  const raw = record(value)
+  onlyFields(raw, ['requestId', 'keyId', 'prompt', 'model', 'aspectRatio', 'reference'])
+  if (node.kind !== 'image') invalid('Only image nodes may contain a generation intent.')
+  const keyId = raw.keyId
+  if (typeof keyId !== 'number' || !Number.isSafeInteger(keyId) || keyId < 1) invalid('Invalid intent key ID.')
+  const aspectRatio = raw.aspectRatio
+  if (aspectRatio !== '1:1' && aspectRatio !== '3:2' && aspectRatio !== '2:3') invalid('Invalid intent aspect ratio.')
+  const intent: CanvasSubmitIntent = {
+    requestId: string(raw.requestId, 256, 'Intent request ID'),
+    keyId,
+    prompt: string(raw.prompt, 32_000, 'Intent prompt'),
+    model: string(raw.model, 256, 'Intent model'),
+    aspectRatio,
+  }
+  if (!intent.requestId.trim()) invalid('Missing intent request ID.')
+  if (raw.reference !== undefined) {
+    checkBlob(raw.reference)
+    return { ...intent, reference: raw.reference }
+  }
+  return intent
+}
+
 function checkGraph(nodes: CanvasNode[]): void {
   const byId = new Map(nodes.map(node => [node.id, node]))
   if (byId.size !== nodes.length) invalid('Duplicate node ID.')
@@ -149,19 +179,19 @@ export async function validateImage(blob: Blob): Promise<void> {
 
 // Snapshot synchronously so a drag, account switch, or edit during validation cannot alter this write.
 function snapshot(board: CanvasBoard, portable: boolean): CanvasBoard {
-  let total = 0
   const nodes = nodeList(board.nodes).map(value => {
     const raw = record(value)
     const node = nodeFields(raw)
-    if (portable && (raw.job !== undefined || (node.kind === 'image' && !raw.image))) {
+    if (portable && (raw.intent !== undefined || raw.job !== undefined || (node.kind === 'image' && !raw.image))) {
       throw new CanvasArchiveError('unfinished-node', 'Finish or remove the unfinished node before exporting.', node.id)
     }
     if (raw.image !== undefined) {
       if (node.kind !== 'image') invalid('Only image nodes may contain an image.')
       checkBlob(raw.image)
       node.image = raw.image
-      total += node.image.size
-      checkImageBudget(total)
+    }
+    if (!portable && raw.intent !== undefined) {
+      node.intent = intentFields(raw.intent, node)
     }
     if (!portable && raw.job !== undefined) {
       const job = record(raw.job)
@@ -173,8 +203,9 @@ function snapshot(board: CanvasBoard, portable: boolean): CanvasBoard {
     if (!portable && raw.error !== undefined) node.error = string(raw.error, 32_000, 'Node error')
     return node
   })
+  checkImageBudget(boardImageBytes(nodes))
   checkGraph(nodes)
-  return { id: id(board.id), name: boardName(board.name), viewport: viewport(board.viewport), nodes }
+  return { id: id(board.id), version: board.version, name: boardName(board.name), viewport: viewport(board.viewport), nodes }
 }
 
 function encodeImage(blob: Blob): Promise<string> {
@@ -262,10 +293,12 @@ export async function importBoard(file: Blob): Promise<CanvasBoard> {
 const BOARDS = 'boards'
 const SUMMARIES = 'summaries'
 const ASSETS = 'assets'
-type StoredNode = Omit<CanvasNode, 'image'> & { assetId?: string }
+type StoredIntent = Omit<CanvasSubmitIntent, 'reference'> & { referenceAssetId?: string }
+type StoredNode = Omit<CanvasNode, 'image' | 'intent'> & { assetId?: string; intent?: StoredIntent }
 type StoredBoard = Omit<CanvasBoard, 'nodes'> & { nodes: StoredNode[] }
 interface Asset { id: string; blob: Blob }
-const assetIds = new WeakMap<Blob, string>()
+// Asset IDs are local to a single board's compound key range, including those read from legacy rows.
+const assetIds = new WeakMap<Blob, { userId: number; boardId: string; assetId: string }>()
 let connection: Promise<IDBDatabase> | undefined
 
 function database(): Promise<IDBDatabase> {
@@ -324,6 +357,26 @@ export async function listBoards(userId: number): Promise<{ id: string; name: st
   return rows.map(({ id, name }) => ({ id, name }))
 }
 
+function restoreBoard(userId: number, stored: StoredBoard, assets: Asset[]): CanvasBoard {
+  const images = new Map(assets.map(asset => [asset.id, asset.blob]))
+  function resolveAsset(assetId: string): Blob {
+    const blob = images.get(assetId)
+    if (!blob) invalid('Stored canvas image is missing.')
+    assetIds.set(blob, { userId, boardId: stored.id, assetId })
+    return blob
+  }
+  const nodes = stored.nodes.map(({ assetId, intent, ...node }) => {
+    const restored: CanvasNode = { ...node }
+    if (assetId !== undefined) restored.image = resolveAsset(assetId)
+    if (intent) {
+      const { referenceAssetId, ...fields } = intent
+      restored.intent = referenceAssetId === undefined ? fields : { ...fields, reference: resolveAsset(referenceAssetId) }
+    }
+    return restored
+  })
+  return snapshot({ ...stored, version: stored.version ?? 0, nodes }, false)
+}
+
 export async function loadBoard(userId: number, boardId: string): Promise<CanvasBoard | undefined> {
   user(userId)
   const key = [userId, id(boardId)]
@@ -334,22 +387,13 @@ export async function loadBoard(userId: number, boardId: string): Promise<Canvas
     readRequest(tx.objectStore(BOARDS).get(key)),
     readRequest(tx.objectStore(ASSETS).getAll(range)),
   ])
-  if (!board) return undefined
-  const images = new Map(assets.map(asset => [asset.id, asset.blob]))
-  const nodes = board.nodes.map(({ assetId, ...node }) => {
-    if (assetId === undefined) return node
-    const image = images.get(assetId)
-    if (!image) invalid('Stored canvas image is missing.')
-    assetIds.set(image, assetId)
-    return { ...node, image }
-  })
-  return { ...board, nodes }
+  return board ? restoreBoard(userId, board, assets) : undefined
 }
 
 // Validation is asynchronous. Serialize same-board mutations in invocation order within this tab.
-const writes = new Map<string, Promise<void>>()
+const writes = new Map<string, Promise<unknown>>()
 
-function writeBoard(userId: number, boardId: string, work: () => Promise<void>): Promise<void> {
+function writeBoard<T>(userId: number, boardId: string, work: () => Promise<T>): Promise<T> {
   const key = `${userId}:${boardId}`
   const previous = writes.get(key) ?? Promise.resolve()
   const next = previous.then(work, work)
@@ -357,26 +401,49 @@ function writeBoard(userId: number, boardId: string, work: () => Promise<void>):
   return next.finally(() => { if (writes.get(key) === next) writes.delete(key) })
 }
 
-async function updateStores(userId: number, boardId: string, board?: CanvasBoard): Promise<void> {
+async function updateStores(userId: number, boardId: string, expectedVersion: number | undefined, board?: CanvasBoard): Promise<number> {
   const db = await database()
   const key = [userId, boardId]
   const range = IDBKeyRange.bound(key, [...key, []])
   const images = new Map<string, Blob>()
-  const nodes: StoredNode[] | undefined = board?.nodes.map(({ image, ...node }) => {
-    if (!image) return node
-    const assetId = assetIds.get(image) ?? newId()
-    assetIds.set(image, assetId)
-    images.set(assetId, image)
-    return { ...node, assetId }
+  function storeAsset(blob: Blob): string {
+    const cached = assetIds.get(blob)
+    const assetId = cached?.userId === userId && cached.boardId === boardId ? cached.assetId : newId()
+    assetIds.set(blob, { userId, boardId, assetId })
+    images.set(assetId, blob)
+    return assetId
+  }
+  const nodes = board?.nodes.map(({ image, intent, ...node }): StoredNode => {
+    const stored: StoredNode = { ...node }
+    if (image) stored.assetId = storeAsset(image)
+    if (intent) {
+      const { reference, ...fields } = intent
+      stored.intent = reference ? { ...fields, referenceAssetId: storeAsset(reference) } : fields
+    }
+    return stored
   })
+  const version = (expectedVersion ?? 0) + 1
   return new Promise((resolve, reject) => {
     const tx = db.transaction([BOARDS, SUMMARIES, ASSETS], 'readwrite')
-    tx.oncomplete = () => resolve()
+    tx.oncomplete = () => resolve(version)
     tx.onabort = () => reject(tx.error ?? new Error('Canvas storage transaction aborted.'))
     const assets = tx.objectStore(ASSETS)
+    const existing = tx.objectStore(BOARDS).get(key)
     const current = assets.getAllKeys(range)
     current.onsuccess = () => {
       try {
+        const committed: StoredBoard | undefined = existing.result
+        const currentVersion = committed === undefined ? undefined : committed.version ?? 0
+        if (expectedVersion !== currentVersion || (!board && !committed)) {
+          // No writes have been scheduled. Read the winning assets under the same lock.
+          if (!committed) { reject(new CanvasConflictError()); return }
+          const rows = assets.getAll(range)
+          rows.onsuccess = () => {
+            try { reject(new CanvasConflictError(restoreBoard(userId, committed, rows.result))) }
+            catch (error) { reject(error) }
+          }
+          return
+        }
         // Reconcile against committed keys inside the transaction (another tab may have saved).
         for (const assetKey of current.result) {
           const assetId = (assetKey as [number, string, string])[2]
@@ -384,7 +451,7 @@ async function updateStores(userId: number, boardId: string, board?: CanvasBoard
         }
         for (const [assetId, blob] of images) assets.put({ id: assetId, blob }, [...key, assetId])
         if (board) {
-          tx.objectStore(BOARDS).put({ ...board, nodes }, key)
+          tx.objectStore(BOARDS).put({ ...board, version, nodes }, key)
           tx.objectStore(SUMMARIES).put({ id: boardId, name: board.name, savedAt: Date.now() }, key)
         } else {
           tx.objectStore(BOARDS).delete(key)
@@ -398,17 +465,20 @@ async function updateStores(userId: number, boardId: string, board?: CanvasBoard
   })
 }
 
-export async function saveBoard(userId: number, board: CanvasBoard): Promise<void> {
+export async function saveBoard(userId: number, board: CanvasBoard, expectedVersion: number | undefined): Promise<number> {
   user(userId)
   const copy = snapshot(board, false)
   return writeBoard(userId, copy.id, async () => {
-    for (const node of copy.nodes) if (node.image) await validateImage(node.image)
-    await updateStores(userId, copy.id, copy)
+    for (const node of copy.nodes) {
+      if (node.image) await validateImage(node.image)
+      if (node.intent?.reference) await validateImage(node.intent.reference)
+    }
+    return updateStores(userId, copy.id, expectedVersion, copy)
   })
 }
 
-export async function deleteBoard(userId: number, boardId: string): Promise<void> {
+export async function deleteBoard(userId: number, boardId: string, expectedVersion: number): Promise<void> {
   user(userId)
   id(boardId)
-  return writeBoard(userId, boardId, () => updateStores(userId, boardId))
+  await writeBoard(userId, boardId, () => updateStores(userId, boardId, expectedVersion))
 }

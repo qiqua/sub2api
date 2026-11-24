@@ -73,6 +73,7 @@ const itemsByJob = new Map<string, BatchImageItem[]>([
   ],
 ])
 const previewRatios = new Map<string, string>()
+const submissions = new Map<string, { job: BatchImageJob; payload: string }>()
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -113,7 +114,21 @@ export function previewListBatchImageModels(): BatchImageModelsResponse {
   }
 }
 
-export function previewSubmitBatchImageJob(payload: BatchImageSubmitRequest): BatchImageJob {
+export function previewLookupBatchImageJob(apiKey: string, requestId: string): BatchImageJob | undefined {
+  const submission = submissions.get(JSON.stringify([apiKey, requestId]))
+  return submission && clone(submission.job)
+}
+
+export function previewSubmitBatchImageJob(apiKey: string, payload: BatchImageSubmitRequest, requestId: string): BatchImageJob {
+  const submissionKey = JSON.stringify([apiKey, requestId])
+  const original = submissions.get(submissionKey)
+  const serialized = JSON.stringify(payload)
+  if (original) {
+    if (original.payload !== serialized) {
+      throw Object.assign(new Error('Idempotency key reused with a different request'), { status: 409, code: 'BATCH_IMAGE_IDEMPOTENCY_CONFLICT' })
+    }
+    return clone(original.job)
+  }
   const createdAt = Math.floor(Date.now() / 1000)
   const expandedItems = payload.items.flatMap(item => {
     const count = Math.max(1, Number(item.output_count) || 1)
@@ -148,6 +163,7 @@ export function previewSubmitBatchImageJob(payload: BatchImageSubmitRequest): Ba
     output_deleted_at: null,
   }
   jobs.unshift(job)
+  if (requestId) submissions.set(submissionKey, { job, payload: serialized })
   if (payload.aspect_ratio) previewRatios.set(job.id, payload.aspect_ratio)
   itemsByJob.set(job.id, expandedItems)
   return clone(job)
@@ -178,6 +194,9 @@ export function previewDeleteBatchImageJob(batchId: string): void {
   if (index >= 0) jobs.splice(index, 1)
   itemsByJob.delete(batchId)
   previewRatios.delete(batchId)
+  for (const [key, submission] of submissions) {
+    if (submission.job.id === batchId) submissions.delete(key)
+  }
 }
 
 export function previewBatchImageDownload(): Blob {

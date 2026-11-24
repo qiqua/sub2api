@@ -51,15 +51,18 @@
       </template>
       <template v-else>
         <p v-if="node.error" role="alert" class="canvas-error">{{ node.error }}</p>
-        <p v-else role="status" class="canvas-note">{{ t(node.job ? 'canvas.jobRunning' : generating ? 'canvas.requestRunning' : 'canvas.noResult') }}</p>
+        <p v-else role="status" class="canvas-note">{{ t(node.job ? 'canvas.jobRunning' : generating ? 'canvas.requestRunning' : node.intent ? (requestMissing ? 'canvas.submitMissing' : 'canvas.requestUnknown') : 'canvas.noResult') }}</p>
         <p v-if="pollError" role="alert" class="canvas-error">{{ pollError }}</p>
-        <button v-if="node.job && !keys.some(k => k.id === node.job?.keyId)" type="button" class="canvas-control" :disabled="loadingKeys" @click="emit('reloadKeys')">{{ t('canvas.refresh') }}</button>
-        <button v-else-if="node.job" type="button" class="canvas-control" @click="emit('poll')"><Icon name="refresh" size="sm" />{{ t('canvas.checkJob') }}</button>
+        <button v-if="(node.job || node.intent) && !hasOwner" type="button" class="canvas-control" :disabled="loadingKeys" @click="emit('reloadKeys')">{{ t('canvas.refresh') }}</button>
+        <template v-else-if="node.job || node.intent">
+          <button type="button" class="canvas-control" :disabled="generating" @click="emit('poll')"><Icon name="refresh" size="sm" />{{ t(node.job ? 'canvas.checkJob' : 'canvas.checkSubmission') }}</button>
+          <button v-if="node.intent && requestMissing && canRetry" type="button" class="canvas-control" :disabled="generating" @click="emit('retry')">{{ t('canvas.retryRequest') }}</button>
+        </template>
         <p v-else-if="!generating" class="canvas-note">{{ t('canvas.checkUsage') }} <RouterLink to="/usage" class="canvas-link">{{ t('nav.usage') }}</RouterLink></p>
       </template>
       <div v-if="node.text" class="canvas-field"><strong>{{ t(node.model ? 'canvas.originalPrompt' : 'canvas.fileName') }}</strong><p class="image-caption">{{ node.text }}</p></div>
       <div v-if="node.model" class="canvas-field"><strong>{{ t('canvas.model') }}</strong><p>{{ node.model }}</p></div>
-      <button v-if="node.model && node.text && !generating && !node.job" class="canvas-link" type="button" @click="emit('reuse')">{{ t('canvas.reusePrompt') }}</button>
+      <button v-if="node.model && node.text && !generating && !node.job && !node.intent" class="canvas-link" type="button" @click="emit('reuse')">{{ t('canvas.reusePrompt') }}</button>
     </div>
     <footer class="inspector-foot"><button type="button" class="canvas-link" :disabled="generating" @click="emit('remove')"><Icon name="trash" size="sm" />{{ t('canvas.removeNode') }}</button></footer>
   </aside>
@@ -77,9 +80,10 @@ import type { CanvasNode } from './document'
 const props = defineProps<{
   node: CanvasNode; references: CanvasNode[]; keys: ApiKey[]; models: string[]; loadingKeys: boolean;
   loadingModels: boolean; keyError: boolean; modelError: boolean; generating: boolean; pollError: string
+  hasOwner: boolean; requestMissing: boolean; canRetry: boolean
 }>()
 const emit = defineEmits<{
-  close: []; text: [text: string]; finishEdit: []; reference: [id: string]; generate: []; branch: []; poll: [];
+  close: []; text: [text: string]; finishEdit: []; reference: [id: string]; generate: []; branch: []; poll: []; retry: [];
   reuse: []; remove: []; reloadKeys: []; reloadModels: []
 }>()
 const keyId = defineModel<number | null>('keyId', { required: true })

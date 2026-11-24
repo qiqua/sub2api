@@ -153,6 +153,82 @@ func TestCalculateCostUnified_DeepseekVersionedNamePeakMultiplier(t *testing.T) 
 	require.InDelta(t, offPeakTotal*2, peak.TotalCost, 1e-10)
 }
 
+func TestCalculateCostUnified_DeepseekRoutedModelRates(t *testing.T) {
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, bs)
+	peak := time.Date(2026, 11, 23, 2, 0, 0, 0, time.UTC) // Monday
+	offPeak := peak.Add(2 * time.Hour)
+	for _, tc := range []struct {
+		model         string
+		peak, offPeak float64
+	}{
+		{"workbuddy/deepseek-v4-pro", 1.32, 0.66},
+		{"qoder-cn/dmodel", 1.32, 0.66},
+		{"dmodel", 1.32, 0.66},
+		{"qoder-cn/dfmodel", 0.30, 0.15},
+		{"workbuddy/DEEPSEEK-v4.1-flash", 0.30, 0.15},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			for _, r := range []*ModelPricingResolver{resolver, nil} {
+				input := CostInput{Ctx: context.Background(), Model: tc.model, Tokens: UsageTokens{InputTokens: 1_000_000},
+					RateMultiplier: 1, Resolver: r, PricingAt: peak}
+				cost, err := bs.CalculateCostUnified(input)
+				require.NoError(t, err)
+				require.InDelta(t, tc.peak, cost.ActualCost, 1e-10, "peak, nil resolver=%t", r == nil)
+				input.PricingAt = offPeak
+				cost, err = bs.CalculateCostUnified(input)
+				require.NoError(t, err)
+				require.InDelta(t, tc.offPeak, cost.ActualCost, 1e-10, "off peak, nil resolver=%t", r == nil)
+			}
+		})
+	}
+}
+
+func TestCalculateCostUnified_DeepseekAliasCustomRatesAtPeak(t *testing.T) {
+	const model = "qoder-cn/dmodel"
+	groupID := int64(1)
+	bs := newTestBillingService()
+	channel := newChannelServiceWithPricings(groupID, []ChannelModelPricing{tokenPricingForModels([]string{model}, 5)})
+	input := CostInput{Ctx: context.Background(), Model: model, Tokens: UsageTokens{InputTokens: 1_000_000},
+		PricingAt: time.Date(2026, 11, 23, 2, 0, 0, 0, time.UTC), RateMultiplier: 1,
+		GroupID: &groupID, Resolver: NewModelPricingResolver(channel, bs)}
+	cost, err := bs.CalculateCostUnified(input)
+	require.NoError(t, err)
+	require.InDelta(t, 5, cost.ActualCost, 1e-10)
+	input.Group = &Group{ID: groupID, ModelPricing: []ChannelModelPricing{tokenPricingForModels([]string{model}, 3)}}
+	cost, err = bs.CalculateCostUnified(input)
+	require.NoError(t, err)
+	require.InDelta(t, 3, cost.ActualCost, 1e-10)
+}
+
+func TestCalculateCostUnified_DeepseekAliasOverrideFilePrecedence(t *testing.T) {
+	svc := newHotReloadPricingService(t, "", `{
+		"deepseek-v4-pro": {"input_cost_per_token": 0},
+		"custom/dmodel": {"input_cost_per_token": 0.000005}
+	}`)
+	bs := NewBillingService(svc.cfg, svc)
+	resolver := NewModelPricingResolver(nil, bs)
+	for _, tc := range []struct {
+		model string
+		want  float64
+	}{
+		{"qoder-cn/dmodel", 0}, // inherits the explicit zero on the Pro card
+		{"custom/dmodel", 5},   // exact route card takes precedence
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			for _, r := range []*ModelPricingResolver{resolver, nil} {
+				cost, err := bs.CalculateCostUnified(CostInput{
+					Ctx: context.Background(), Model: tc.model, Tokens: UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000},
+					RateMultiplier: 1, Resolver: r, PricingAt: time.Date(2026, 11, 23, 2, 0, 0, 0, time.UTC),
+				})
+				require.NoError(t, err)
+				require.InDelta(t, tc.want, cost.InputCost, 1e-10)
+				require.InDelta(t, 3.96, cost.OutputCost, 1e-10) // unpatched Pro output at peak
+			}
+		})
+	}
+}
+
 func TestCalculateCostUnified_DeepseekGroupPricingNotScaledByPeak(t *testing.T) {
 	bs := newTestBillingService()
 	resolver := NewModelPricingResolver(nil, bs)
@@ -475,6 +551,7 @@ func TestGetModelPricing_VendorPrefixedModelReusesBuiltinRates(t *testing.T) {
 		})
 	}
 }
+
 // Explicit override-file token prices are final operator rates, including zero.
 // Fields absent from that patch still use the official default and peak policy.
 func TestDeepseekOverrideFileTokenPrices(t *testing.T) {
@@ -495,6 +572,7 @@ func TestDeepseekOverrideFileTokenPrices(t *testing.T) {
 		{"override only", "deepseek-flash", "override", fullPatch, custom, custom},
 		{"input only", "deepseek-flash", "catalog", `{"input_cost_per_token":0.000002}`, prices{2e-6, 6e-7, 3e-9}, prices{2e-6, 1.2e-6, 6e-9}},
 		{"zero input", "deepseek-flash", "catalog", `{"input_cost_per_token":0}`, prices{0, 6e-7, 3e-9}, prices{0, 1.2e-6, 6e-9}},
+		{"alias partial override", "qoder-cn/dmodel", "catalog", `{"input_cost_per_token":0,"output_cost_per_token":0.000003}`, prices{0, 3e-6, 2.2e-8}, prices{0, 3e-6, 4.4e-8}},
 		{"zero output", "deepseek-flash", "catalog", `{"output_cost_per_token":0}`, prices{1.5e-7, 0, 3e-9}, prices{3e-7, 0, 6e-9}},
 		{"zero cache read", "deepseek-flash", "catalog", `{"cache_read_input_token_cost":0}`, prices{1.5e-7, 6e-7, 0}, prices{3e-7, 1.2e-6, 0}},
 		{"metadata only", "deepseek-flash", "catalog", `{"supports_prompt_caching":true}`, official, officialPeak},

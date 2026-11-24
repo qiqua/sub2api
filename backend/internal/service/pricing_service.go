@@ -1392,6 +1392,11 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 		// Prefer canonical model names for all other aliases (including models/xxx).
 		candidates = append([]string{normalized}, candidates...)
 	}
+	// A route-specific card wins. Short DeepSeek IDs otherwise inherit the
+	// target card, including field-level override_file prices.
+	if target := deepseekPricingModel(modelLower); target != "" && target != lastSegment(modelLower) {
+		candidates = append(candidates, target)
+	}
 
 	seen := make(map[string]struct{}, len(candidates))
 	out := make([]string, 0, len(candidates))

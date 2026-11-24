@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -43,7 +44,49 @@ func (r *batchImageRepository) CreateBatchImageJob(ctx context.Context, params s
 		params.Currency = "USD"
 	}
 
+	if params.IdempotencyKey != nil && *params.IdempotencyKey != "" && params.APIKeyID != nil {
+		// Keep the existence check and insert in one short transaction. The table
+		// predates scoped uniqueness and may contain older duplicate keys.
+		if r.db == nil {
+			return createKeyedBatchImageJob(ctx, r.sql, params)
+		}
+		tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		job, err := createKeyedBatchImageJob(ctx, tx, params)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return job, nil
+	}
+
 	job, err := createBatchImageJobWithSQL(ctx, r.sql, params)
+	if err != nil {
+		return nil, translatePersistenceError(err, nil, service.ErrBatchImageJobExists)
+	}
+	return job, nil
+}
+
+func createKeyedBatchImageJob(ctx context.Context, tx batchImageSQLExecutor, params service.CreateBatchImageJobParams) (*service.BatchImageJob, error) {
+	scope := fmt.Sprintf("batch_image_submit:%d:%d:%s", params.UserID, *params.APIKeyID, *params.IdempotencyKey)
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryLockHash(scope)); err != nil {
+		return nil, err
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM batch_image_jobs WHERE user_id = $1 AND api_key_id = $2 AND idempotency_key = $3
+	)`, params.UserID, *params.APIKeyID, *params.IdempotencyKey).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, service.ErrBatchImageJobExists
+	}
+	job, err := createBatchImageJobWithSQL(ctx, tx, params)
 	if err != nil {
 		return nil, translatePersistenceError(err, nil, service.ErrBatchImageJobExists)
 	}

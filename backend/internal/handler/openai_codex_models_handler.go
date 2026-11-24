@@ -34,8 +34,25 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		return
 	}
 	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, "")
+	if apiKey == nil {
+		return
+	}
 
 	ifNoneMatch := c.GetHeader("If-None-Match")
+	primaryAllowlist := autoRoutePrimaryModelAllowlist(c)
+	writeManifest := func(manifest *service.OpenAIModelsResponse) {
+		if primaryAllowlist.Enabled {
+			if err := service.RestrictRoutedCodexModelsManifest(manifest, primaryAllowlist, c.GetHeader("If-None-Match")); err != nil {
+				h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to filter Codex models manifest")
+				return
+			}
+		}
+		writeOpenAIModelsResponse(c, manifest)
+	}
+	if primaryAllowlist.Enabled {
+		// Match the ETag only after applying both groups' listing restrictions.
+		ifNoneMatch = ""
+	}
 	// 固定账号分支：开启后只用选定账号拉取 manifest，不经过调度器；
 	// 全部不可用/全部失败时按 FallbackToScheduler 决定回退调度器或返回错误。
 	if apiKey.Group.Platform == service.PlatformOpenAI &&
@@ -68,7 +85,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			if c.Request.Context().Err() != nil {
 				return
 			}
-			writeOpenAIModelsResponse(c, pinnedManifest)
+			writeManifest(pinnedManifest)
 			return
 		}
 	}
@@ -87,7 +104,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			return
 		}
 		if configured {
-			writeOpenAIModelsResponse(c, configuredManifest)
+			writeManifest(configuredManifest)
 			return
 		}
 	}
@@ -148,7 +165,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			return
 		}
 
-		writeOpenAIModelsResponse(c, manifest)
+		writeManifest(manifest)
 		return
 	}
 }

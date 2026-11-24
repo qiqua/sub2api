@@ -13,6 +13,7 @@ API users do not see Gemini file names, Vertex job names, GCS paths, signed URLs
 
 ```text
 POST   /v1/images/batches
+GET    /v1/images/batches/by-idempotency-key
 GET    /v1/images/batches/{id}
 GET    /v1/images/batches/{id}/items
 GET    /v1/images/batches/{id}/items/{custom_id}/content
@@ -20,6 +21,8 @@ GET    /v1/images/batches/{id}/download
 POST   /v1/images/batches/{id}/cancel
 DELETE /v1/images/batches/{id}/outputs
 ```
+
+To recover a submission after a lost response, send its original `Idempotency-Key` header to `GET /v1/images/batches/by-idempotency-key` with the same API key. A matching job returns its original batch ID. An absent submission returns `404 BATCH_IMAGE_NOT_FOUND`. A removed submission returns `410 BATCH_IMAGE_SUBMISSION_REMOVED`. A generation hold may consume the last available balance; the owner can still list, poll and download their existing batches with a valid, authorized API key.
 
 Submit request:
 

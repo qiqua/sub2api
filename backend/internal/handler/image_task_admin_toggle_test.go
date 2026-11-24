@@ -86,6 +86,7 @@ func TestAsyncImageEnablesWithoutRestart(t *testing.T) {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		groupID := int64(3)
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
 		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
 			ID: 9, UserID: 7, GroupID: &groupID,
 			Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, AllowImageGeneration: true},

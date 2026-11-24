@@ -241,7 +241,10 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 	}
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", parsedReq.Stream))
-	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel)
+	apiKey = applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, reqLog, apiKey, reqModel, service.WithAPIKeyAutoRouteMessagesDispatchRequired())
+	if apiKey == nil {
+		return
+	}
 	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 	if apiKey.Group != nil && !apiKey.Group.AllowMessagesDispatch {
 		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",

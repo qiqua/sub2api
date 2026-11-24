@@ -55,7 +55,8 @@ func TestGrokImageEditLocalValidationSyncAndAsync(t *testing.T) {
 						if async {
 							store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
 							tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
-							asyncHandler := NewAsyncImageHandler(tasks, h)
+							c.Request.Header.Set("X-API-Key", "test-key")
+							asyncHandler := NewAsyncImageHandler(tasks, h, nil)
 							asyncHandler.Submit(c)
 							require.Equal(t, http.StatusAccepted, recorder.Code, recorder.Body.String())
 							taskID := gjson.GetBytes(recorder.Body.Bytes(), "task_id").String()
@@ -221,7 +222,8 @@ func TestGrokImagesPreservesUpstreamErrorOnSyncAndAsyncRoutes(t *testing.T) {
 				if async {
 					store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
 					tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
-					asyncHandler := NewAsyncImageHandler(tasks, h)
+					c.Request.Header.Set("X-API-Key", "test-key")
+					asyncHandler := NewAsyncImageHandler(tasks, h, nil)
 					asyncHandler.Submit(c)
 					require.Equal(t, http.StatusAccepted, recorder.Code, recorder.Body.String())
 					taskID := gjson.GetBytes(recorder.Body.Bytes(), "task_id").String()
@@ -252,4 +254,28 @@ func TestGrokImagesPreservesUpstreamErrorOnSyncAndAsyncRoutes(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestGrokImageMultipartEditForwardsResolvedCompositeModel(t *testing.T) {
+	h, slots, _, upstream := newGrokMediaSlotHandler(t, false, false)
+	body, contentType := grokImageEditLimitBody(t, "multipart", 2)
+	body = bytes.Replace(body, []byte("grok-imagine-image-2.0"), []byte("public-art"), 1)
+	ctx := service.WithCompositeRouteDecision(context.Background(), service.CompositeRouteDecision{
+		Matched: true, PublicModel: "public-art", TargetPlatform: service.PlatformGrok, UpstreamModel: "grok-imagine-image-2.0",
+	})
+	c, w := grokMediaSlotContext(ctx, true)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body)).WithContext(ctx)
+	c.Request.Header.Set("Content-Type", contentType)
+	upstream.call = func(req *http.Request, _ int64) (*http.Response, error) {
+		forwarded, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		require.Equal(t, "grok-imagine-image-2.0", gjson.GetBytes(forwarded, "model").String())
+		require.Len(t, gjson.GetBytes(forwarded, "images").Array(), 2)
+		return &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"code":"invalid_image","error":"upstream image rejection"}`))}, nil
+	}
+	h.GrokImages(c)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	require.Equal(t, 1, upstream.calls)
+	slots.assertReleased(t)
 }

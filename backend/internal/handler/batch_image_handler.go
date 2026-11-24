@@ -39,12 +39,8 @@ func (h *BatchImageHandler) Submit(c *gin.Context) {
 		batchImageError(c, service.ErrBatchImageInvalidItems)
 		return
 	}
-	if apiKey, ok := middleware.GetAPIKeyFromContext(c); ok && apiKey != nil {
-		applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, req.Model)
-	}
-	owner, ok := batchImageOwnerFromContext(c)
+	owner, ok := h.routeBatchImageOwner(c, req.Model, req.Provider)
 	if !ok {
-		batchImageError(c, infraerrors.New(http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required"))
 		return
 	}
 	if !h.checkSecurityAuditBeforeSubmit(c, &req) {
@@ -89,9 +85,10 @@ func (h *BatchImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, req *
 		batchImageError(c, infraerrors.New(http.StatusBadRequest, "INVALID_BATCH_PROMPT", "batch prompts are invalid"))
 		return false
 	}
+	model := clientRequestedModel(c, req.Model)
 	reqLog := requestLogger(c, "handler.batch_image.security_audit",
-		zap.Int64("user_id", subject.UserID), zap.Int64("api_key_id", apiKey.ID), zap.String("model", req.Model))
-	decision := h.openAI.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIImages, req.Model, body)
+		zap.Int64("user_id", subject.UserID), zap.Int64("api_key_id", apiKey.ID), zap.String("model", model))
+	decision := h.openAI.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIImages, model, body)
 	if decision != nil && !decision.AllowNextStage {
 		h.openAI.openAISecurityAuditError(c, decision)
 		return false
@@ -111,6 +108,21 @@ func (h *BatchImageHandler) Get(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, got)
+}
+
+func (h *BatchImageHandler) GetByIdempotencyKey(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	owner, ok := batchImageOwnerFromContext(c)
+	if !ok {
+		batchImageError(c, infraerrors.New(http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required"))
+		return
+	}
+	batch, err := h.service.GetByIdempotencyKey(c.Request.Context(), owner, c.GetHeader("Idempotency-Key"))
+	if err != nil {
+		batchImageError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, batch)
 }
 
 func (h *BatchImageHandler) List(c *gin.Context) {
@@ -137,12 +149,8 @@ func (h *BatchImageHandler) List(c *gin.Context) {
 }
 
 func (h *BatchImageHandler) Models(c *gin.Context) {
-	if apiKey, ok := middleware.GetAPIKeyFromContext(c); ok && apiKey != nil {
-		applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, apiKey, "")
-	}
-	owner, ok := batchImageOwnerFromContext(c)
+	owner, ok := h.routeBatchImageOwner(c, "", "")
 	if !ok {
-		batchImageError(c, infraerrors.New(http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required"))
 		return
 	}
 	got, err := h.service.ListModels(c.Request.Context(), owner)
@@ -154,6 +162,7 @@ func (h *BatchImageHandler) Models(c *gin.Context) {
 	if apiKey, ok := middleware.GetAPIKeyFromContext(c); ok && apiKey != nil && apiKey.Group != nil {
 		got.Data = filterBatchImageModelsByAllowlist(got.Data, apiKey.Group.ModelAllowlist)
 	}
+	got.Data = filterBatchImageModelsByAllowlist(got.Data, autoRoutePrimaryModelAllowlist(c))
 	c.JSON(http.StatusOK, got)
 }
 
@@ -305,9 +314,28 @@ func (h *BatchImageHandler) DeleteOutputs(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
+func (h *BatchImageHandler) routeBatchImageOwner(c *gin.Context, model, provider string) (service.BatchImageOwner, bool) {
+	owner, ok := batchImageOwnerFromContext(c)
+	if !ok {
+		batchImageError(c, infraerrors.New(http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required"))
+		return service.BatchImageOwner{}, false
+	}
+	primary, _ := middleware.GetAPIKeyFromContext(c)
+	routed := applyAPIKeyAutoRoute(c, h.apiKeyAutoRouter, nil, primary, model, service.WithAPIKeyAutoRouteBatchImageRequired(provider))
+	if routed == nil {
+		return service.BatchImageOwner{}, false
+	}
+	owner.GroupID = routed.GroupID
+	return owner, true
+}
+
 func batchImageOwnerFromContext(c *gin.Context) (service.BatchImageOwner, bool) {
 	apiKey, ok := middleware.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil || apiKey.ID <= 0 || apiKey.UserID <= 0 {
+		return service.BatchImageOwner{}, false
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID != apiKey.UserID {
 		return service.BatchImageOwner{}, false
 	}
 	return service.BatchImageOwner{

@@ -296,11 +296,12 @@ func TestOpenAIWSTurnBillingAPIKeysKeepPreviousTurnUntilItIsRecorded(t *testing.
 func TestRefreshOpenAIWSTurnBillingAPIKey_AutoRoutedGroup(t *testing.T) {
 	primaryID, selectedID := int64(77), int64(78)
 	authenticated := &service.APIKey{
-		ID: 5, Key: "sk-auto", GroupID: &primaryID, RoutingMode: service.APIKeyRoutingModeAuto,
-		AutoRouteGroupIDs: []int64{selectedID}, User: &service.User{ID: 9},
+		ID: 5, UserID: 9, Key: "sk-auto", GroupID: &primaryID, RoutingMode: service.APIKeyRoutingModeAuto,
+		Status: service.StatusActive, AutoRouteGroupIDs: []int64{selectedID}, User: &service.User{ID: 9, Status: service.StatusActive},
 		Group: &service.Group{ID: primaryID, Platform: service.PlatformOpenAI, SubscriptionType: service.SubscriptionTypeStandard, RateMultiplier: 1},
 	}
-	selected := &service.Group{ID: selectedID, Platform: service.PlatformOpenAI, SubscriptionType: service.SubscriptionTypeStandard, RateMultiplier: 3}
+	selected := &service.Group{ID: selectedID, Platform: service.PlatformOpenAI, SubscriptionType: service.SubscriptionTypeSubscription, RateMultiplier: 3}
+	sub := &service.UserSubscription{ID: 101, UserID: 9, GroupID: selectedID}
 	conn := cloneAPIKeyWithGroup(authenticated, selected)
 	for _, test := range []struct {
 		name        string
@@ -308,6 +309,7 @@ func TestRefreshOpenAIWSTurnBillingAPIKey_AutoRoutedGroup(t *testing.T) {
 		mutateGroup func(*service.Group)
 		lookupErr   bool
 		groupErr    bool
+		replacedSub bool
 		wantRefresh bool
 	}{
 		{name: "refreshes selected group not primary", wantRefresh: true},
@@ -316,11 +318,11 @@ func TestRefreshOpenAIWSTurnBillingAPIKey_AutoRoutedGroup(t *testing.T) {
 		{name: "key moved", mutateKey: func(key *service.APIKey) { id := int64(79); key.GroupID = &id; key.Group.ID = id }},
 		{name: "different key", mutateKey: func(key *service.APIKey) { key.ID++ }},
 		{name: "routing disabled", mutateKey: func(key *service.APIKey) { key.RoutingMode = service.APIKeyRoutingModeFixed }},
-		{name: "selected candidate removed", mutateKey: func(key *service.APIKey) { key.AutoRouteGroupIDs = nil }},
-		{name: "primary platform changed", mutateKey: func(key *service.APIKey) { key.Group.Platform = service.PlatformAnthropic }},
-		{name: "primary billing type changed", mutateKey: func(key *service.APIKey) { key.Group.SubscriptionType = service.SubscriptionTypeSubscription }},
+		{name: "key disabled", mutateKey: func(key *service.APIKey) { key.Status = service.StatusDisabled }},
+		{name: "selected subscription replaced", replacedSub: true},
+		{name: "selected policy changed", mutateGroup: func(group *service.Group) { group.MaxReasoningEffort = "low" }},
 		{name: "selected platform changed", mutateGroup: func(group *service.Group) { group.Platform = service.PlatformAnthropic }},
-		{name: "selected billing type changed", mutateGroup: func(group *service.Group) { group.SubscriptionType = service.SubscriptionTypeSubscription }},
+		{name: "selected billing type changed", mutateGroup: func(group *service.Group) { group.SubscriptionType = service.SubscriptionTypeStandard }},
 		{name: "selected identity changed", mutateGroup: func(group *service.Group) { group.ID++ }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -342,27 +344,109 @@ func TestRefreshOpenAIWSTurnBillingAPIKey_AutoRoutedGroup(t *testing.T) {
 				return &latest, nil
 			})
 			route := &openAIWSTurnBillingRoute{
-				authenticatedKey: authenticated,
-				lookupGroup: func(_ context.Context, id int64) (*service.Group, error) {
-					require.Equal(t, selectedID, id, "a later turn must not resolve a new route")
-					if test.groupErr {
-						return nil, errors.New("group unavailable")
+				authenticatedKey: authenticated, selectedKey: conn, subscription: sub,
+				resolve: func(_ context.Context, key *service.APIKey, model string, options ...service.APIKeyAutoRouteOption) (*service.Group, service.APIKeyAutoRouteDecision, error) {
+					require.Same(t, &latest, key)
+					require.Equal(t, "new-model", model)
+					var opts service.APIKeyAutoRouteOptions
+					for _, option := range options {
+						option(&opts)
 					}
-					return &group, nil
+					require.Equal(t, &selectedID, opts.PinnedGroup)
+					require.Equal(t, []string{"new-model", "session-model"}, opts.PublicModels)
+					require.True(t, opts.RequireImageGeneration)
+					if test.groupErr {
+						return nil, service.APIKeyAutoRouteDecision{}, errors.New("group unavailable")
+					}
+					currentSub := *sub
+					if test.replacedSub {
+						currentSub.ID++
+					}
+					return &group, service.APIKeyAutoRouteDecision{Enabled: true, Subscription: &currentSub}, nil
 				},
 			}
-			got := refreshOpenAIWSTurnBillingAPIKey(context.Background(), lookup, conn, route)
+			got, err := route.revalidate(context.Background(), lookup, "new-model", []string{"new-model", "session-model"}, true)
 			if !test.wantRefresh {
-				require.Same(t, conn, got)
+				require.Error(t, err)
+				require.Nil(t, got, "an unverified route must not fall back to the connection snapshot")
 				return
 			}
+			require.NoError(t, err)
 			require.NotSame(t, conn, got)
 			require.Equal(t, selectedID, *got.GroupID)
 			require.Same(t, &group, got.Group)
-			require.Same(t, conn.User, got.User)
+			require.Equal(t, conn.User.ID, got.User.ID)
 			require.InDelta(t, 3, conn.Group.RateMultiplier, 1e-12)
 		})
 	}
+}
+
+func TestOpenAIResponsesWebSocket_AutoRouteUnavailableClosesAfterUpgrade(t *testing.T) {
+	repo := newWSGroupPricingAPIKeyRepoStub(1)
+	repo.apiKey.RoutingMode = service.APIKeyRoutingModeAuto
+	runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		firstPayload: wsGroupPricingFirst, apiKeyService: newWSGroupPricingAPIKeyService(repo),
+		apiKeyCredential: wsGroupPricingKey, firstFrameCloseExpected: true, closeReason: "no eligible group",
+	})
+}
+
+func TestOpenAIResponsesWebSocket_AutoRouteRechecksSelectedGroup(t *testing.T) {
+	for _, revoke := range []bool{false, true} {
+		name := "retains selected group"
+		if revoke {
+			name = "selected group removed"
+		}
+		t.Run(name, func(t *testing.T) {
+			keys := newWSGroupPricingAPIKeyRepoStub(1)
+			selectedID := wsGroupPricingGroupID + 1
+			keys.apiKey.RoutingMode = service.APIKeyRoutingModeAuto
+			keys.apiKey.AutoRouteGroupIDs = []int64{selectedID}
+			keyService := newWSGroupPricingAPIKeyService(keys)
+			selected := keys.group
+			selected.ID, selected.RateMultiplier = selectedID, 3
+			groups := &systemOneAutoRouteGroupRepo{groups: map[int64]*service.Group{
+				wsGroupPricingGroupID: &keys.group, selectedID: &selected,
+			}}
+			accounts := &systemOneAutoRouteAccountRepo{accounts: map[int64][]service.Account{
+				selectedID: {{ID: 9901, Platform: service.PlatformOpenAI, Status: service.StatusActive, Type: service.AccountTypeAPIKey, Schedulable: true, Concurrency: 1}},
+			}}
+			cfg := &config.Config{RunMode: config.RunModeSimple}
+			router := service.NewAPIKeyAutoRouter(groups, accounts, service.NewGroupCapacityService(accounts, groups, nil, nil, nil), systemOneAutoRouteUserRepo{}, nil, cfg, nil)
+			got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+				firstPayload: wsGroupPricingFirst, secondPayload: wsGroupPricingSecond,
+				apiKeyService: keyService, apiKeyCredential: wsGroupPricingKey, apiKeyAutoRouter: router,
+				secondTurnCloseExpected: revoke, closeReason: "group access changed",
+				afterFirstUpstreamRequest: func(*service.ChannelService) error {
+					if revoke {
+						return keys.adminUpdate(keyService, func(k *service.APIKey, _ *service.Group) { k.AutoRouteGroupIDs = nil })
+					}
+					return nil
+				},
+			})
+			if !revoke {
+				require.Len(t, got.logs, 2)
+				for _, usage := range got.logs {
+					require.Equal(t, &selectedID, usage.GroupID)
+					require.InDelta(t, 3, usage.RateMultiplier, 1e-12)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenAIResponsesWebSocket_GroupAllowlistTightenedBetweenTurns(t *testing.T) {
+	repo := newWSGroupPricingAPIKeyRepoStub(1)
+	keyService := newWSGroupPricingAPIKeyService(repo)
+	runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		firstPayload: wsGroupPricingFirst, secondPayload: wsGroupPricingSecond,
+		apiKeyService: keyService, apiKeyCredential: wsGroupPricingKey,
+		secondTurnCloseExpected: true,
+		afterFirstUpstreamRequest: func(*service.ChannelService) error {
+			return repo.adminUpdate(keyService, func(_ *service.APIKey, group *service.Group) {
+				group.ModelAllowlist = service.GroupModelAllowlist{Enabled: true, Models: []string{"other-model"}}
+			})
+		},
+	})
 }
 
 func TestOpenAIWSTurnBillingAPIKeys_AutoRouteRefreshesBillingAndProfitContext(t *testing.T) {
@@ -378,19 +462,20 @@ func TestOpenAIWSTurnBillingAPIKeys_AutoRouteRefreshesBillingAndProfitContext(t 
 	latestGroup := *selected
 	latestGroup.RateMultiplier = 0.3
 	lookups := 0
-	keys := openAIWSTurnBillingAPIKeys{route: &openAIWSTurnBillingRoute{
-		authenticatedKey: authenticated,
-		lookupGroup: func(_ context.Context, id int64) (*service.Group, error) {
+	var keys openAIWSTurnBillingAPIKeys
+	route := &openAIWSTurnBillingRoute{
+		authenticatedKey: authenticated, selectedKey: conn,
+		resolve: func(_ context.Context, _ *service.APIKey, _ string, _ ...service.APIKeyAutoRouteOption) (*service.Group, service.APIKeyAutoRouteDecision, error) {
 			lookups++
-			require.Equal(t, selectedID, id)
-			return &latestGroup, nil
+			return &latestGroup, service.APIKeyAutoRouteDecision{Enabled: true}, nil
 		},
-	}}
+	}
 	ctx := context.WithValue(context.Background(), ctxkey.Group, selected)
-	firstCtx := keys.begin(ctx, keyService, 1, conn)
-	require.Same(t, selected, firstCtx.Value(ctxkey.Group))
-	require.Zero(t, lookups)
-	secondCtx := keys.begin(ctx, keyService, 2, conn)
+	keys.set(1, conn)
+	turnKey, err := route.revalidate(ctx, keyService.GetByKeyForReentry, "public-alias", []string{"public-alias"}, false)
+	require.NoError(t, err)
+	keys.set(2, turnKey)
+	secondCtx := withOpenAIWSTurnBillingGroup(ctx, turnKey)
 	require.Same(t, &latestGroup, secondCtx.Value(ctxkey.Group))
 	require.Same(t, &latestGroup, keys.forTurn(2, conn).Group)
 	require.Same(t, selected, keys.forTurn(1, conn).Group)
