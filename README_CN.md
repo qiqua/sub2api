@@ -759,6 +759,14 @@ OAuth / Setup Token 的 1.5、2、2.5 和 2.6 图片请求使用 Codex 原生 Im
 
 升级后，无模型限制的账号自动支持新模型。已有显式账号映射或分组白名单需要主动加入两个 2.6 模型；升级不会扩大已保存的模型权限。2.6 内置官方文本输入、图片输入、缓存及图片输出 token 费率，远端价格表缺失或动态价格服务不可用时仍可兜底；实际按张或按 token 计费继续由既有分组/渠道配置决定。无需数据库迁移或新增环境变量。
 
+## 无限画布
+
+登录后从侧栏打开「无限画布」（`/image-workbench`）。双击空白处写提示词，或拖入、粘贴 PNG、JPEG、WebP 图片。选中提示词，在节点详情里选择计费密钥、模型和画幅，生成的图片会连到原提示词。选中结果点「用作参考图」可以继续改图并保留原图。「素材库」能按画布查找并复用已有的提示词和图片。
+
+OpenAI 和 Grok 分组使用已开启生图权限的密钥，走 `/v1/images/generations` 或 `/v1/images/edits`。Gemini 分组使用已开启批量生图权限的密钥，走 `/v1/images/batches`，重新打开原画布可继续查询任务。费用沿用所选密钥的分组规则。
+
+画布和图片按登录账号保存在当前浏览器的 IndexedDB。点击顶部画布名可切换、新建、重命名或导出画布。换设备前导出 `.canvas.json`，再在目标设备导入。单张图片上限 10 MiB，每张画布的图片合计上限 32 MiB。交互参考了 [infinite-canvas 的节点手册](https://github.com/basketikun/infinite-canvas/blob/main/docs/content/docs/canvas/canvas-node-manual.mdx)和 [Xiaoz Canvas 的公开创作页](https://canvas.xiaoz.cloud/)。
+
 ## 简易模式
 
 简易模式适合个人开发者或内部团队快速使用，不依赖完整 SaaS 功能。

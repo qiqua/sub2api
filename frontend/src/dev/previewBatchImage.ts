@@ -72,6 +72,7 @@ const itemsByJob = new Map<string, BatchImageItem[]>([
     ],
   ],
 ])
+const previewRatios = new Map<string, string>()
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -147,6 +148,7 @@ export function previewSubmitBatchImageJob(payload: BatchImageSubmitRequest): Ba
     output_deleted_at: null,
   }
   jobs.unshift(job)
+  if (payload.aspect_ratio) previewRatios.set(job.id, payload.aspect_ratio)
   itemsByJob.set(job.id, expandedItems)
   return clone(job)
 }
@@ -175,13 +177,38 @@ export function previewDeleteBatchImageJob(batchId: string): void {
   const index = jobs.findIndex(job => job.id === batchId)
   if (index >= 0) jobs.splice(index, 1)
   itemsByJob.delete(batchId)
+  previewRatios.delete(batchId)
 }
 
 export function previewBatchImageDownload(): Blob {
   return new Blob(['Sub2API local preview archive'], { type: 'application/zip' })
 }
 
-export function previewBatchImageContent(): Blob {
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="960"><rect width="960" height="960" fill="#eef3ff"/><circle cx="480" cy="420" r="210" fill="#2454ff"/><text x="480" y="450" text-anchor="middle" font-family="Arial" font-size="72" font-weight="700" fill="white">XIAOMING</text><text x="480" y="700" text-anchor="middle" font-family="Arial" font-size="38" fill="#1b2b52">LOCAL PREVIEW</text></svg>'
-  return new Blob([svg], { type: 'image/svg+xml' })
+export async function previewBatchImageContent(batchId: string): Promise<Blob> {
+  // Render the preview label into a raster so a demo result can itself be used as a reference.
+  const ratio = previewRatios.get(batchId)
+  const canvas = document.createElement('canvas')
+  canvas.width = ratio === '2:3' ? 480 : 720
+  canvas.height = ratio === '3:2' ? 480 : 720
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Image preview is unavailable')
+  const cx = canvas.width / 2
+  const cy = canvas.height * .43
+  ctx.fillStyle = '#eef3ff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = '#2454ff'
+  ctx.beginPath()
+  ctx.arc(cx, cy, Math.min(cx, cy) * .68, 0, 2 * Math.PI)
+  ctx.fill()
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#fff'
+  ctx.font = 'bold 36px sans-serif'
+  ctx.fillText('XIAOMING', cx, cy + 12)
+  ctx.fillStyle = '#1b2b52'
+  ctx.font = '24px sans-serif'
+  ctx.fillText('LOCAL PREVIEW', cx, canvas.height * .84)
+  return new Promise((resolve, reject) => canvas.toBlob(blob => {
+    if (blob) resolve(blob)
+    else reject(new Error('Could not render preview image'))
+  }, 'image/png'))
 }

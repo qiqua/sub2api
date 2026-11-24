@@ -166,7 +166,7 @@ export default {
     dashboard: 'Dashboard',
     announcements: 'Announcements',
     apiKeys: 'API Keys',
-    imageWorkbench: 'Image Workbench',
+    imageWorkbench: 'Infinite Canvas',
     batchImage: 'Batch Images',
     usage: 'Request Logs',
     usageStats: 'Usage Statistics',

@@ -1,0 +1,18 @@
+export default {
+  title: '画布素材库',
+  source: '来源画布',
+  current: '{name}（当前画布）',
+  search: '搜索素材',
+  placeholder: '提示词、图片名称或模型',
+  kind: '素材类型',
+  all: '全部素材',
+  prompt: '提示词',
+  image: '图片',
+  unnamedImage: '图片 {number}',
+  add: '添加到画布',
+  loading: '正在读取画布素材…',
+  unavailable: '无法读取这张画布，请重试或选择其他画布。',
+  retry: '重试',
+  empty: '这张画布还没有素材。写下提示词或添加图片后，即可在此复用。',
+  noMatches: '没有匹配的素材，请更换搜索词或素材类型。',
+}

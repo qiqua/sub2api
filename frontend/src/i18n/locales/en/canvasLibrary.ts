@@ -1,0 +1,18 @@
+export default {
+  title: 'Canvas library',
+  source: 'Source canvas',
+  current: '{name} (current)',
+  search: 'Search assets',
+  placeholder: 'Prompt text, image name or model',
+  kind: 'Asset type',
+  all: 'All assets',
+  prompt: 'Prompts',
+  image: 'Images',
+  unnamedImage: 'Image {number}',
+  add: 'Add to canvas',
+  loading: 'Loading assets from this canvas…',
+  unavailable: 'Couldn’t load this canvas. Try again or choose another canvas.',
+  retry: 'Try again',
+  empty: 'This canvas has no assets yet. Write a prompt or add an image to reuse it here.',
+  noMatches: 'No matching assets. Change the search or asset type.',
+}

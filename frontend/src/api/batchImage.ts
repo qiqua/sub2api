@@ -150,10 +150,12 @@ export async function submitBatchImageJob(
   apiKey: string,
   payload: BatchImageSubmitRequest,
   idempotencyKey: string,
+  signal?: AbortSignal,
 ): Promise<BatchImageJob> {
   if (isPreviewMode) return previewSubmitBatchImageJob(payload)
   const response = await fetch(buildGatewayUrl('/v1/images/batches'), {
     method: 'POST',
+    signal,
     headers: authHeaders(apiKey, {
       'Content-Type': 'application/json',
       'Idempotency-Key': idempotencyKey,
@@ -164,10 +166,11 @@ export async function submitBatchImageJob(
   return response.json()
 }
 
-export async function getBatchImageJob(apiKey: string, batchId: string): Promise<BatchImageJob> {
+export async function getBatchImageJob(apiKey: string, batchId: string, signal?: AbortSignal): Promise<BatchImageJob> {
   if (isPreviewMode) return previewGetBatchImageJob(batchId)
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}`), {
     headers: authHeaders(apiKey),
+    signal,
   })
   if (!response.ok) throw await parseBatchImageError(response)
   return response.json()
@@ -207,11 +210,13 @@ export async function listBatchImageItems(
   apiKey: string,
   batchId: string,
   status = '',
+  signal?: AbortSignal,
 ): Promise<BatchImageItemsResponse> {
   if (isPreviewMode) return previewListBatchImageItems(batchId, status)
   const query = status ? `?status=${encodeURIComponent(status)}` : ''
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}/items${query}`), {
     headers: authHeaders(apiKey),
+    signal,
   })
   if (!response.ok) throw await parseBatchImageError(response)
   return response.json()
@@ -236,10 +241,11 @@ export async function downloadBatchImageZip(apiKey: string, batchId: string): Pr
   return response.blob()
 }
 
-export async function getBatchImageItemContent(apiKey: string, batchId: string, customId: string, imageIndex = 0): Promise<Blob> {
-  if (isPreviewMode) return previewBatchImageContent()
+export async function getBatchImageItemContent(apiKey: string, batchId: string, customId: string, imageIndex = 0, signal?: AbortSignal): Promise<Blob> {
+  if (isPreviewMode) return previewBatchImageContent(batchId)
   const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(customId)}/content?image_index=${encodeURIComponent(String(imageIndex))}`), {
     headers: authHeaders(apiKey),
+    signal,
   })
   if (!response.ok) throw await parseBatchImageError(response)
   return response.blob()

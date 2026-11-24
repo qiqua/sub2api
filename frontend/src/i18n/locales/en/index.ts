@@ -5,6 +5,8 @@ import common from './common'
 import dashboard from './dashboard'
 import channelMonitorV2 from './channelMonitorV2'
 import batchImage from './batchImage'
+import canvas from './canvas'
+import canvasLibrary from './canvasLibrary'
 import admin from './admin'
 import misc from './misc'
 import consoleReplica from './consoleReplica'
@@ -17,6 +19,8 @@ export default {
   ...dashboard,
   ...channelMonitorV2,
   ...batchImage,
+  canvas,
+  canvasLibrary,
   admin,
   ...misc,
   ...consoleReplica,

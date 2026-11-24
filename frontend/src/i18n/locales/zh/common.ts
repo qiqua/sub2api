@@ -166,7 +166,7 @@ export default {
     dashboard: '仪表盘',
     announcements: '公告',
     apiKeys: 'API 密钥',
-    imageWorkbench: '生图工作台',
+    imageWorkbench: '无限画布',
     batchImage: '批量生图',
     usage: '请求日志',
     usageStats: '使用量统计',

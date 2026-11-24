@@ -235,7 +235,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Image Workbench',
+      title: 'Infinite Canvas',
       titleKey: 'nav.imageWorkbench'
     }
   },
